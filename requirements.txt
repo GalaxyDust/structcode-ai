@@ -1,0 +1,8 @@
+flask
+google-genai
+google-generativeai
+openai
+python-dotenv
+gunicorn
+tenacity
+pymongo
