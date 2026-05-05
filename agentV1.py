@@ -42,6 +42,7 @@ class LLMProvider(ABC):
         user_prompt: str,
         temperature: float = 0.15,
         max_tokens: int = 4096,
+        model_id: Optional[str] = None # TAMBAHAN BARU
     ) -> str:
         pass
 
@@ -148,7 +149,53 @@ class OpenAIProvider(LLMProvider):
     @property
     def model_name(self) -> str:
         return self._model_name
+    
+# ---------------------------------------------------------------------------
+# OpenRouter Provider
+# ---------------------------------------------------------------------------
+class OpenRouterProvider(LLMProvider):
+    def __init__(self, api_key: str, model: str):
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("openai not installed. Run: pip install openai")
+        
+        # Konfigurasi khusus OpenRouter
+        self._client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+        )
+        self._model_name = model
 
+    def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.15,
+        max_tokens: int = 4096,
+        model_id: Optional[str] = None
+    ) -> str:
+        # Gunakan model_id dari argumen jika ada (Untuk switching dinamis)
+        target_model = model_id if model_id else self._model_name
+        
+        response = self._client.chat.completions.create(
+            model=target_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content
+
+    @property
+    def provider_name(self) -> str:
+        return "OpenRouter"
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
 # ---------------------------------------------------------------------------
 # Prompt Templates (Updated for <kw> tags and strict formatting)
 # ---------------------------------------------------------------------------
@@ -302,19 +349,23 @@ class StructCodeAgent:
         )
 
     def _init_provider(self) -> LLMProvider:
-        provider_name = os.getenv("LLM_PROVIDER", "gemini").lower().strip()
+        provider_name = os.getenv("LLM_PROVIDER", "openrouter").lower().strip()
         
-        if provider_name == "openai":
+        if provider_name == "openrouter":
+            api_key = os.getenv("OPENROUTER_API_KEY", "")
+            # Default model jika tidak dipilih dari frontend
+            model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
+            if not api_key:
+                raise ValueError("OPENROUTER_API_KEY not found in .env")
+            return OpenRouterProvider(api_key=api_key, model=model)
+            
+        elif provider_name == "openai":
             api_key = os.getenv("OPENAI_API_KEY", "")
             model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            if not api_key:
-                raise ValueError("OPENAI_API_KEY not found in .env")
             return OpenAIProvider(api_key=api_key, model=model)
-        
+            
         api_key = os.getenv("GEMINI_API_KEY", "")
         model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY not found in .env")
         return GeminiProvider(api_key=api_key, model=model)
 
     @property
@@ -364,7 +415,8 @@ class StructCodeAgent:
         feature: str,
         user_input: str,
         extra_context: str = "",
-        language: str = "en"
+        language: str = "en",
+        model_id: str = None # TAMBAHAN BARU
     ) -> str:
         if feature not in self.VALID_FEATURES:
             feature = "general"
@@ -389,8 +441,9 @@ class StructCodeAgent:
         user_prompt = "\n\n".join(user_prompt_parts)
 
         try:
-            result = self._generate_with_retry(system_prompt, user_prompt)
-            logger.info("ask() completed | feature=%s | lang=%s", feature, language)
+            # Kirim parameter model_id ke provider
+            result = self._provider.generate(system_prompt, user_prompt, model_id=model_id)
+            logger.info("ask() completed | feature=%s | model=%s", feature, model_id)
             return result
         except Exception as exc:
             return self._handle_error(exc)

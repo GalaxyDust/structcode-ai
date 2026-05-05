@@ -22,6 +22,20 @@ const FEATURES = {
   HELP_WRITE: "help_write",
 };
 
+// Metadata Model OpenRouter
+const OPENROUTER_MODELS = {
+  model1: {
+    id: "meta-llama/llama-3.3-70b-instruct:free",
+    name: "Llama 3.3 70B",
+    expert: "Ahli Algoritma & Struktur Data Umum"
+  },
+  model2: {
+    id: "qwen/qwen-3-coder-480b-a35b:free",
+    name: "Qwen 3 Coder 480B",
+    expert: "Ahli Logika Pemrograman Fungsional & Bug"
+  }
+};
+
 const FEATURE_META = {
   [FEATURES.GENERAL]:    { icon: "❓" },
   [FEATURES.FROM_CODE]:  { icon: "💻" },
@@ -131,7 +145,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initGeneralInput();
   initInlinePopupDismiss();
   initKeyboardShortcuts();
-  
+  loadChatHistory(); // Memuat chat history dari DB
   // Terapkan terjemahan default saat pertama kali load
   applyTranslations();
   switchView(FEATURES.GENERAL);
@@ -453,52 +467,112 @@ async function submitGeneral() {
   if (AppState.isLoading || !DOM.inputGeneral) return;
   
   const input = DOM.inputGeneral.value.trim();
-  if (!input) {
-    shakeElement(DOM.inputGeneral);
-    return;
-  }
+  if (!input) { shakeElement(DOM.inputGeneral); return; }
 
+  // Cek status toggle Compare
+  const isCompareMode = document.getElementById("toggle-compare")?.checked;
+  
   addChatMessage(FEATURES.GENERAL, "user", escapeHtml(input));
-  const querySnippet = input.substring(0, 200);
   DOM.inputGeneral.value = "";
   
   AppState.isLoading = true;
-  AppState.totalQueriesSession++;
   showTypingIndicator(FEATURES.GENERAL);
 
   try {
-    const res = await fetch("/api/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        feature: FEATURES.GENERAL,
-        input: input,
-        language: AppState.language,
-        is_follow_up: false,
-        follow_up_index: 0,
-      }),
-    });
-    
-    const data = await res.json();
+    // Fungsi pembantu untuk fetch ke 1 model
+    const fetchModel = async (modelConfig) => {
+      const res = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          feature: FEATURES.GENERAL,
+          input: input,
+          language: AppState.language,
+          model_id: modelConfig.id
+        }),
+      });
+      const data = await res.json();
+      data.modelConfig = modelConfig; // tempelkan config untuk UI
+      return data;
+    };
+
+    let results = [];
+    if (isCompareMode) {
+      // 2.1 Multi-Model Parallel Output (Menembak 2 model sekaligus)
+      results = await Promise.all([
+        fetchModel(OPENROUTER_MODELS.model1),
+        fetchModel(OPENROUTER_MODELS.model2)
+      ]);
+    } else {
+      // Single model (Default Model 1)
+      results = [await fetchModel(OPENROUTER_MODELS.model1)];
+    }
+
     hideTypingIndicator(FEATURES.GENERAL);
 
-    if (data.error) {
-      addErrorMessage(FEATURES.GENERAL, data.error);
+    // Render ke UI
+    if (isCompareMode && results.length === 2) {
+       renderMultiModelResponse(results);
     } else {
-      AppState.lastResponse = {
-        feature: FEATURES.GENERAL,
-        querySnippet: querySnippet,
-        responseSnippet: data.response.substring(0, 300),
-        isFollowUp: false,
-      };
-      renderGeneralResponse(data.response);
+       renderSingleModelResponse(results[0], input);
     }
+    
   } catch (err) {
     hideTypingIndicator(FEATURES.GENERAL);
     addErrorMessage(FEATURES.GENERAL, `Network error: ${err.message}`);
   } finally {
     AppState.isLoading = false;
   }
+}
+
+// Fungsi Render untuk Multi Model (Bersebelahan)
+function renderMultiModelResponse(results) {
+  const chatBox = document.getElementById(`chat-${FEATURES.GENERAL}`);
+  const container = document.createElement("div");
+  container.className = "multi-model-container";
+
+  results.forEach(data => {
+    const col = document.createElement("div");
+    col.className = "multi-model-col message bot";
+    col.style.maxWidth = "100%"; // override
+    
+    if (data.error) {
+      col.innerHTML = `<div class="error-message">⚠ ${escapeHtml(data.error)}</div>`;
+    } else {
+      const metaHtml = `
+        <div class="model-meta-box">
+          <span><strong>Model:</strong> ${data.modelConfig.name}</span>
+          <span class="meta-tag">🧠 ${data.modelConfig.expert}</span>
+          <span>⏱ ${data.execution_time} sec</span>
+        </div>
+      `;
+      const content = extractSection(data.response, "ANSWER", ["FOLLOWUP1"]) || data.response;
+      col.innerHTML = metaHtml + formatText(content);
+    }
+    container.appendChild(col);
+  });
+
+  chatBox.appendChild(container);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+// Fungsi Render untuk Single Model (Beserta Metadata)
+function renderSingleModelResponse(data, originalQuery) {
+  if (data.error) {
+    addErrorMessage(FEATURES.GENERAL, data.error);
+    return;
+  }
+  
+  const metaHtml = `
+    <div class="model-meta-box">
+      <span><strong>Model:</strong> ${data.modelConfig.name}</span>
+      <span class="meta-tag">🧠 ${data.modelConfig.expert}</span>
+      <span>⏱ ${data.execution_time} sec</span>
+    </div>
+  `;
+  
+  const answer = extractSection(data.response, "ANSWER", ["FOLLOWUP1"]) || data.response;
+  addChatMessage(FEATURES.GENERAL, "bot", metaHtml + formatText(answer));
 }
 
 async function submitFollowUp(text) {
@@ -1606,4 +1680,44 @@ function escapeHtml(str) {
 function cleanChipText(text) {
   if (!text) return "";
   return text.replace(/<\/?kw>/g, '');
+}
+
+// 3. Persistensi Chat (Anti-Hilang saat Refresh)
+async function loadChatHistory() {
+  try {
+    const res = await fetch("/api/history");
+    const data = await res.json();
+    
+    if (data.status === "ok" && data.history.length > 0) {
+      const chatBox = document.getElementById(`chat-${FEATURES.GENERAL}`);
+      const emptyState = chatBox.querySelector(".empty-state");
+      if (emptyState) emptyState.remove();
+
+      data.history.forEach(log => {
+        // Render pertanyaan user
+        if (log.rq1_query && log.rq1_query.input_preview) {
+           addChatMessage(FEATURES.GENERAL, "user", escapeHtml(log.rq1_query.input_preview));
+        }
+        
+        // Cek config model
+        let mConfig = OPENROUTER_MODELS.model1;
+        if (log.model_used && log.model_used.includes("qwen")) mConfig = OPENROUTER_MODELS.model2;
+
+        // Render balasan AI dari Database
+        if (log.rq2_response && log.rq2_response.response_preview) {
+          const metaHtml = `
+            <div class="model-meta-box">
+              <span><strong>Model:</strong> ${mConfig.name}</span>
+              <span class="meta-tag">🧠 ${mConfig.expert}</span>
+              <span>⏱ ${log.execution_time_sec || "-"} sec</span>
+            </div>
+          `;
+          const content = extractSection(log.rq2_response.response_preview, "ANSWER", ["FOLLOWUP1"]) || log.rq2_response.response_preview;
+          addChatMessage(FEATURES.GENERAL, "bot", metaHtml + formatText(content));
+        }
+      });
+    }
+  } catch (err) {
+    console.warn("Gagal memuat history chat:", err);
+  }
 }

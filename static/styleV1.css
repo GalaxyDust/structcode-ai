@@ -272,7 +272,38 @@ body {
 .message.bot pre { background: var(--bg-input); padding: var(--space-md); border-radius: var(--radius-sm); overflow-x: auto; margin: 10px 0 4px; border: 1px solid var(--border); font-family: var(--font-mono); font-size: 0.88rem; color: var(--text-code); }
 .message.bot code { font-family: var(--font-mono); font-size: 0.88rem; background: rgba(255, 255, 255, 0.06); padding: 2px 5px; border-radius: 3px; color: var(--accent2); }
 .message.bot pre code { background: transparent; padding: 0; color: var(--text-code); }
-
+/* Style untuk Label Metadata Model */
+.model-meta-box {
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  margin: -18px -18px 14px -18px; /* Offset karena padding parent */
+  border-radius: var(--radius-sm) var(--radius) 0 0;
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+.meta-tag {
+  background: var(--bg-hover);
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: var(--accent2);
+  font-weight: bold;
+}
+.multi-model-container {
+  display: flex; gap: var(--space-md); margin-top: 10px;
+}
+.multi-model-col {
+  flex: 1; min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+@media (max-width: 768px) {
+  .multi-model-container { flex-direction: column; }
+}
 /* Typing & Error */
 .error-message { color: var(--error); background: var(--error-dim); border: 1px solid rgba(244, 67, 54, 0.30); border-radius: var(--radius); padding: var(--space-md); font-size: var(--font-size-sm); }
 .message.typing { display: flex; align-items: center; gap: var(--space-sm); padding: 12px 18px; color: var(--text-dim); font-style: italic; font-size: var(--font-size-sm); max-width: 280px; align-self: flex-start; }
@@ -490,23 +521,21 @@ textarea:focus { border-color: var(--accent); }
   .chat-area { padding: var(--space-md); }
   .composer { padding: var(--space-sm) var(--space-md); }
   
-  /* OVERRIDE SPLIT PANEL UNTUK MOBILE (Berubah jadi Atas-Bawah) */
+/* OVERRIDE SPLIT PANEL UNTUK MOBILE (Dibuat scrollable natural) */
   .split-panel {
-    flex-direction: column !important; /* Susun vertikal */
-    overflow-y: auto; /* Izinkan scroll di keseluruhan panel */
+    flex-direction: column !important;
+    overflow: visible; /* Biarkan konten memanjang ke bawah */
   }
   
   .panel-input, .panel-output {
-    flex: none !important; /* Matikan flex basis sizing */
+    flex: 1 1 auto !important; /* Biarkan ukuran menyesuaikan konten */
     width: 100%;
-    min-height: 400px; /* Beri tinggi minimum agar nyaman dibaca */
+    min-height: 0; /* HAPUS min-height 400px yang lama */
     overflow: visible; 
   }
   
-  /* Modifikasi Resizer agar tidak bisa digeser horizontal di Mobile */
-  .resizer {
-    width: 100%; height: 6px; cursor: ns-resize; border-top: 1px solid var(--border);
-  }
+  /* Sembunyikan resizer di mobile agar tidak mengganggu */
+  .resizer { display: none !important; }
   .resizer::after {
     width: 32px; height: 2px; /* Garis horizontal resizer */
   }
