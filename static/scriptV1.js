@@ -1746,3 +1746,69 @@ function toggleHideModel(btn, bodyId) {
     btn.textContent = "➕ Tampilkan";
   }
 }
+
+// 1. FUNGSI DRAWER BATTLE SLIDE
+function toggleBattleDrawer() {
+  const drawer = document.getElementById("battle-drawer");
+  const btn = document.getElementById("btn-slide-battle");
+  if (drawer.classList.contains("open")) {
+    drawer.classList.remove("open");
+    btn.classList.remove("hide-btn");
+  } else {
+    drawer.classList.add("open");
+    btn.classList.add("hide-btn");
+  }
+}
+
+// 2. FUNGSI PENGATURAN MODEL AGAR TOMBOL SIMPAN BERFUNGSI
+function openModelSettings() {
+  document.getElementById("model-modal").classList.remove("hidden");
+  document.getElementById("select-provider").value = AppState.provider;
+  updateModelDropdowns(); // Isi opsi dropdown
+  // Paksa select HTML untuk memilih model yang tersimpan di state
+  setTimeout(() => { document.getElementById("select-model").value = AppState.model; }, 50);
+}
+
+function updateModelDropdowns() {
+  const prov = document.getElementById("select-provider").value;
+  const modelSelect = document.getElementById("select-model");
+  modelSelect.innerHTML = ""; // Bersihkan opsi lama
+  
+  if(AI_MODELS[prov]) {
+    AI_MODELS[prov].forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m.id; 
+      opt.textContent = `${m.name} - ${m.expert}`;
+      modelSelect.appendChild(opt);
+    });
+  }
+}
+
+function saveModelSettings() {
+  const prov = document.getElementById("select-provider").value;
+  const mod = document.getElementById("select-model").value;
+  
+  if (!prov || !mod) {
+    showToast("Gagal menyimpan, pastikan model dipilih", "error");
+    return;
+  }
+
+  AppState.provider = prov;
+  AppState.model = mod;
+  
+  // Simpan ke LocalStorage agar permanen
+  localStorage.setItem("sc_provider", prov);
+  localStorage.setItem("sc_model", mod);
+  
+  updateProviderBadgeUI();
+  document.getElementById("model-modal").classList.add("hidden");
+  showToast("Model AI berhasil diperbarui", "success");
+}
+
+function updateProviderBadgeUI() {
+  const badge = document.getElementById("display-active-model");
+  if(badge && AI_MODELS[AppState.provider]) {
+    const modelObj = AI_MODELS[AppState.provider].find(m => m.id === AppState.model);
+    badge.textContent = modelObj ? modelObj.name : AppState.model;
+  }
+}

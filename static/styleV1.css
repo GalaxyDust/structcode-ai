@@ -594,3 +594,71 @@ textarea:focus { border-color: var(--accent); }
   .panel-input, .panel-output { flex: none !important; width: 100%; min-height: fit-content; overflow: visible; }
   .resizer { display: none !important; }
 }
+/* =========================================
+   UI BATTLE MODE DRAWER (SLIDE KANAN)
+========================================= */
+.floating-battle-btn {
+  position: fixed; top: 80px; right: 0; z-index: 5000;
+  background: var(--accent); color: #fff; border: 1px solid var(--border); border-right: none;
+  padding: 8px 12px; border-radius: 8px 0 0 8px; cursor: pointer; font-weight: bold;
+  box-shadow: -2px 2px 10px rgba(0,0,0,0.3); transition: transform 0.3s ease;
+}
+.floating-battle-btn:hover { background: var(--accent-hover); transform: translateX(-5px); }
+.floating-battle-btn.hide-btn { transform: translateX(100%); } /* Hilang saat laci ditarik */
+
+.battle-drawer {
+  position: fixed; top: 0; right: -300px; width: 300px; height: 100vh;
+  background: var(--bg-panel); box-shadow: -5px 0 20px rgba(0,0,0,0.5); z-index: 5001;
+  transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+}
+.battle-drawer.open { right: 0; }
+
+.drawer-header {
+  padding: 15px; border-bottom: 1px solid var(--border); display: flex;
+  justify-content: space-between; align-items: center; background: var(--bg-sidebar);
+}
+.drawer-body { padding: 20px; }
+
+/* Modern Toggle Switch untuk Laci */
+.modern-toggle { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.modern-toggle input { display: none; }
+.toggle-slider {
+  position: relative; width: 40px; height: 20px; background: var(--bg-input);
+  border-radius: 20px; border: 1px solid var(--border); transition: 0.3s;
+}
+.toggle-slider::before {
+  content: ""; position: absolute; height: 14px; width: 14px;
+  border-radius: 50%; left: 2px; bottom: 2px; background: var(--text-muted); transition: 0.3s;
+}
+.modern-toggle input:checked + .toggle-slider { background: var(--error); border-color: var(--error); }
+.modern-toggle input:checked + .toggle-slider::before { transform: translateX(20px); background: #fff; }
+
+/* =========================================
+   PERBAIKAN MOBILE AGAR TIDAK SESAK & KAKU
+========================================= */
+@media (max-width: 768px) {
+  #btn-burger { display: inline-block !important; }
+  
+  /* Topbar lebih lapang */
+  .topbar { padding: 0 10px; }
+  #display-user-name { display: none !important; } /* Sembunyikan nama agar tidak sesak */
+  .lang-toggle { padding: 4px 8px; font-size: 11px; }
+
+  /* Sidebar menjadi Laci Kiri */
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 9999;
+    width: 260px; max-width: 80vw; display: flex !important;
+    transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--shadow-lg);
+  }
+  .sidebar.open { transform: translateX(0); }
+
+  /* Area Battle menjadi atas-bawah */
+  .battle-container { flex-direction: column; } 
+  
+  /* Panel split tidak kaku lagi */
+  .split-panel { flex-direction: column !important; overflow-y: auto; }
+  .panel-input, .panel-output { flex: none !important; width: 100%; min-height: fit-content; overflow: visible; }
+  .resizer { display: none !important; }
+}
