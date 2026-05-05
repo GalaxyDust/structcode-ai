@@ -14,7 +14,7 @@ import uuid
 import logging
 from datetime import datetime
 from typing import Any
-
+import time
 from flask import Flask, render_template, request, jsonify, session
 from pymongo import MongoClient
 
@@ -229,6 +229,10 @@ def ask():
     user_input = payload.get("input", "").strip()
     extra_context = payload.get("extra", "").strip()
     language = payload.get("language", "en")
+    
+    # Ambil Pilihan Model dari Frontend (Default ke OpenRouter Llama jika kosong)
+    provider = payload.get("provider", "openrouter")
+    model_id = payload.get("model_id", "meta-llama/llama-3.3-70b-instruct:free")
 
     if not user_input and feature != "explain":
         return jsonify({"error": "Input cannot be empty.", "response": None}), 400
@@ -236,34 +240,35 @@ def ask():
     if feature == "explain" and not extra_context:
         return jsonify({"error": "Please paste pseudocode to explain.", "response": None}), 400
 
+    # MENGHITUNG WAKTU EKSEKUSI
+    start_time = time.time()
+    
     response_text = agent.ask(
         feature=feature,
         user_input=user_input,
         extra_context=extra_context,
-        language=language  
+        language=language,
+        provider=provider,
+        model_id=model_id
     )
+    
+    execution_time = round(time.time() - start_time, 2)
 
     log_entry = {
         **build_base_log(feature),
         "language_used": language,
+        "provider": provider,
+        "model_used": model_id,
+        "execution_time_sec": execution_time,
         "rq1_query": {
             "input_preview": user_input[:500],
             "has_code_context": bool(extra_context),
             "code_context_lines": len(extra_context.splitlines()) if extra_context else 0,
-            "input_word_count": len(user_input.split()),
             "is_follow_up": payload.get("is_follow_up", False),
-            "follow_up_index": payload.get("follow_up_index", 0),
         },
         "rq2_response": {
             "response_preview": response_text[:1000],
-            "response_length": len(response_text),
             "is_error": response_text.startswith("ERROR|||"),
-            "manual_codes": {
-                "correctness": None,
-                "helpfulness": None,
-                "solution_revelation": None,
-                "query_type": None,
-            },
         },
     }
 
@@ -271,15 +276,31 @@ def ask():
 
     if response_text.startswith("ERROR|||"):
         error_msg = response_text.replace("ERROR|||", "")
-        insert_log(col_error, {
-            **build_base_log(feature),
-            "error_message": error_msg,
-            "error_type": "rate_limit" if "rate limit" in error_msg.lower() else "llm_error",
-        })
-        status_code = 429 if "rate limit" in error_msg.lower() else 500
-        return jsonify({"error": error_msg, "response": None}), status_code
+        return jsonify({"error": error_msg, "response": None, "execution_time": execution_time}), 429
 
-    return jsonify({"response": response_text})
+    return jsonify({
+        "response": response_text,
+        "execution_time": execution_time,
+        "provider": provider,
+        "model_id": model_id
+    })
+
+# ---------------------------------------------------------------------------
+# Routes: History Endpoint (Untuk Persistensi Chat saat Refresh)
+# ---------------------------------------------------------------------------
+@app.route("/api/history", methods=["GET"])
+def get_history():
+    if db is None:
+        return jsonify({"error": "Database not connected", "history": []})
+        
+    session_id = get_session_id()
+    # Cari 50 log terakhir khusus untuk fitur General
+    logs = list(col_usage.find(
+        {"session_id": session_id, "feature": "general", "rq2_response.is_error": False},
+        {"_id": 0}
+    ).sort("timestamp", 1).limit(50))
+    
+    return jsonify({"status": "ok", "history": logs})
 
 # ---------------------------------------------------------------------------
 # Routes: Inline Exploration (RQ1 + D1)

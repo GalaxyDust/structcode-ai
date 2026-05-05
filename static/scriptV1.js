@@ -13,6 +13,23 @@
 //===========================================================================
 // CONSTANTS & CONFIGURATION
 //===========================================================================
+const AI_MODELS = {
+  openrouter: [
+    { id: "meta-llama/llama-3.3-70b-instruct:free", name: "Llama 3.3 (70B)", expert: "Ahli Algoritma Umum" },
+    { id: "qwen/qwen-3-coder-480b-a35b:free", name: "Qwen 3 Coder", expert: "Ahli Logika & Bug" },
+    { id: "google/gemma-3-27b-it:free", name: "Gemma 3 (27B)", expert: "Pakar Konsep Cepat" }
+  ],
+  gemini: [
+    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", expert: "Ahli Analisis Cepat" }
+  ],
+  openai: [
+    { id: "gpt-4o-mini", name: "GPT-4o Mini", expert: "Asisten Standar" }
+  ]
+};
+
+// Update AppState
+AppState.provider = localStorage.getItem("sc_provider") || "openrouter";
+AppState.model = localStorage.getItem("sc_model") || "meta-llama/llama-3.3-70b-instruct:free";
 
 const FEATURES = {
   GENERAL: "general",
@@ -131,7 +148,9 @@ document.addEventListener("DOMContentLoaded", () => {
   initGeneralInput();
   initInlinePopupDismiss();
   initKeyboardShortcuts();
-  
+  initBurgerMenu();
+  updateProviderBadgeUI();
+  loadChatHistory(); // Panggil fungsi load history
   // Terapkan terjemahan default saat pertama kali load
   applyTranslations();
   switchView(FEATURES.GENERAL);
@@ -451,53 +470,106 @@ function showToast(message, type = "info", duration = 3000) {
 
 async function submitGeneral() {
   if (AppState.isLoading || !DOM.inputGeneral) return;
-  
   const input = DOM.inputGeneral.value.trim();
-  if (!input) {
-    shakeElement(DOM.inputGeneral);
-    return;
-  }
+  if (!input) return;
 
+  const isBattle = document.getElementById("toggle-compare")?.checked;
   addChatMessage(FEATURES.GENERAL, "user", escapeHtml(input));
-  const querySnippet = input.substring(0, 200);
   DOM.inputGeneral.value = "";
-  
-  AppState.isLoading = true;
-  AppState.totalQueriesSession++;
-  showTypingIndicator(FEATURES.GENERAL);
+  AppState.isLoading = true; showTypingIndicator(FEATURES.GENERAL);
+
+  // Helper function untuk memanggil API
+  const fetchAI = async (prov, modId, fallbackExpert) => {
+    try {
+      const res = await fetch("/api/ask", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feature: FEATURES.GENERAL, input: input, language: AppState.language, provider: prov, model: modId })
+      });
+      const data = await res.json();
+      // Cari nama expert
+      let mName = modId, mExpert = fallbackExpert;
+      if(AI_MODELS[prov]) {
+        const f = AI_MODELS[prov].find(x => x.id === modId);
+        if(f) { mName = f.name; mExpert = f.expert; }
+      }
+      return { ...data, mName, mExpert };
+    } catch(e) { return { error: e.message, mName: modId, mExpert: "Error" }; }
+  };
 
   try {
-    const res = await fetch("/api/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        feature: FEATURES.GENERAL,
-        input: input,
-        language: AppState.language,
-        is_follow_up: false,
-        follow_up_index: 0,
-      }),
-    });
-    
-    const data = await res.json();
-    hideTypingIndicator(FEATURES.GENERAL);
-
-    if (data.error) {
-      addErrorMessage(FEATURES.GENERAL, data.error);
+    if (isBattle) {
+      // BATTLE MODE (Paralel)
+      const res1 = fetchAI(AppState.provider, AppState.model, "Model Utama");
+      // Model Pembanding otomatis (Qwen Coder)
+      const res2 = fetchAI("openrouter", "qwen/qwen-3-coder-480b-a35b:free", "Model Pembanding");
+      
+      const [data1, data2] = await Promise.all([res1, res2]);
+      hideTypingIndicator(FEATURES.GENERAL);
+      renderBattleUI(data1, data2);
     } else {
-      AppState.lastResponse = {
-        feature: FEATURES.GENERAL,
-        querySnippet: querySnippet,
-        responseSnippet: data.response.substring(0, 300),
-        isFollowUp: false,
-      };
-      renderGeneralResponse(data.response);
+      // SINGLE MODE
+      const data1 = await fetchAI(AppState.provider, AppState.model, "Model Utama");
+      hideTypingIndicator(FEATURES.GENERAL);
+      
+      if(data1.error) addErrorMessage(FEATURES.GENERAL, data1.error);
+      else {
+        const ans = extractSection(data1.response, "ANSWER", ["FOLLOWUP1"]) || data1.response;
+        const html = `
+          <div style="font-size:11px; color:var(--text-dim); margin-bottom:6px;">
+             🧠 <strong>${data1.mName}</strong> | ⏱ ${data1.time}s
+          </div>
+          ${formatText(ans)}
+        `;
+        addChatMessage(FEATURES.GENERAL, "bot", html);
+      }
     }
-  } catch (err) {
-    hideTypingIndicator(FEATURES.GENERAL);
-    addErrorMessage(FEATURES.GENERAL, `Network error: ${err.message}`);
-  } finally {
-    AppState.isLoading = false;
+  } catch (err) { hideTypingIndicator(FEATURES.GENERAL); addErrorMessage(FEATURES.GENERAL, err.message); }
+  AppState.isLoading = false;
+}
+
+function renderBattleUI(d1, d2) {
+  const chatBox = document.getElementById(`chat-${FEATURES.GENERAL}`);
+  const battleId = Date.now();
+  
+  const buildCol = (d, suffix) => {
+    const ans = d.error ? `⚠ ${d.error}` : (extractSection(d.response, "ANSWER", ["FOLLOWUP1"]) || d.response);
+    return `
+      <div class="battle-col">
+        <div class="battle-header">
+          <div class="battle-meta"><strong>${d.mName}</strong><span>⏱ ${d.time || 0}s | 🧠 ${d.mExpert}</span></div>
+          <button class="btn-toggle-hide" onclick="toggleHideModel(this, 'bbody-${battleId}-${suffix}')">➖ Sembunyikan</button>
+        </div>
+        <div id="bbody-${battleId}-${suffix}" class="battle-body">${formatText(ans)}</div>
+      </div>
+    `;
+  };
+
+  const html = `<div class="battle-container">${buildCol(d1, 'left')}${buildCol(d2, 'right')}</div>`;
+  const el = document.createElement("div");
+  el.style.width = "100%"; el.innerHTML = html;
+  chatBox.appendChild(el);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+// HISTORY (Anti-hilang saat Refresh)
+async function loadChatHistory() {
+  const res = await fetch("/api/history");
+  const data = await res.json();
+  if(data.history && data.history.length > 0) {
+    const chatBox = document.getElementById(`chat-${FEATURES.GENERAL}`);
+    chatBox.innerHTML = ""; // Bersihkan tulisan "welcome"
+    data.history.forEach(log => {
+       if(log.rq1_query?.input) addChatMessage(FEATURES.GENERAL, "user", escapeHtml(log.rq1_query.input));
+       if(log.rq2_response?.response) {
+         const ans = extractSection(log.rq2_response.response, "ANSWER", ["FOLLOWUP1"]) || log.rq2_response.response;
+         addChatMessage(FEATURES.GENERAL, "bot", `
+          <div style="font-size:11px; color:var(--text-dim); margin-bottom:6px;">
+             🧠 <strong>${log.model_used || 'AI Model'}</strong> | ⏱ ${log.execution_time_sec || 0}s
+          </div>
+          ${formatText(ans)}
+         `);
+       }
+    });
   }
 }
 
@@ -1606,4 +1678,71 @@ function escapeHtml(str) {
 function cleanChipText(text) {
   if (!text) return "";
   return text.replace(/<\/?kw>/g, '');
+}
+
+function initBurgerMenu() {
+  const burgerBtn = document.getElementById("btn-burger");
+  const sidebar = document.querySelector(".sidebar");
+  const overlay = document.getElementById("sidebar-overlay");
+
+  if(!burgerBtn || !sidebar || !overlay) return;
+
+  burgerBtn.addEventListener("click", () => {
+    sidebar.classList.add("open");
+    overlay.classList.remove("hidden");
+  });
+  overlay.addEventListener("click", () => {
+    sidebar.classList.remove("open");
+    overlay.classList.add("hidden");
+  });
+}
+
+function openModelSettings() {
+  document.getElementById("model-modal").classList.remove("hidden");
+  document.getElementById("select-provider").value = AppState.provider;
+  updateModelDropdowns();
+  document.getElementById("select-model").value = AppState.model;
+}
+
+function updateModelDropdowns() {
+  const prov = document.getElementById("select-provider").value;
+  const modelSelect = document.getElementById("select-model");
+  modelSelect.innerHTML = "";
+  
+  AI_MODELS[prov].forEach(m => {
+    const opt = document.createElement("option");
+    opt.value = m.id; opt.textContent = `${m.name} - ${m.expert}`;
+    modelSelect.appendChild(opt);
+  });
+}
+
+function saveModelSettings() {
+  AppState.provider = document.getElementById("select-provider").value;
+  AppState.model = document.getElementById("select-model").value;
+  localStorage.setItem("sc_provider", AppState.provider);
+  localStorage.setItem("sc_model", AppState.model);
+  
+  updateProviderBadgeUI();
+  document.getElementById("model-modal").classList.add("hidden");
+  showToast("Model AI berhasil diperbarui", "success");
+}
+
+function updateProviderBadgeUI() {
+  const badge = document.getElementById("display-active-model");
+  if(badge) {
+    const modelObj = AI_MODELS[AppState.provider].find(m => m.id === AppState.model);
+    badge.textContent = modelObj ? modelObj.name : AppState.model;
+  }
+}
+
+// FUNGSI HIDE/SHOW MODEL BATTLE
+function toggleHideModel(btn, bodyId) {
+  const body = document.getElementById(bodyId);
+  if(body.classList.contains("hidden-content")) {
+    body.classList.remove("hidden-content");
+    btn.textContent = "➖ Sembunyikan";
+  } else {
+    body.classList.add("hidden-content");
+    btn.textContent = "➕ Tampilkan";
+  }
 }
