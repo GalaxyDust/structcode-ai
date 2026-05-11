@@ -105,7 +105,7 @@ MODEL_REGISTRY = {
 }
 
 # Default model saat pertama load
-DEFAULT_MODEL_ID = "google/gemini-2.5-flash"
+DEFAULT_MODEL_ID = "meta-llama/llama-3.3-70b-instruct:free"
 
 # ---------------------------------------------------------------------------
 # Abstract LLM Provider
@@ -587,8 +587,8 @@ class StructCodeAgent:
         return "\n\n".join(parts)
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=5, max=30),
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=8),
         retry=retry_if_exception_type(Exception),
         reraise=True,
     )
@@ -598,7 +598,6 @@ class StructCodeAgent:
         system_prompt: str,
         user_prompt: str,
     ) -> str:
-        """Generate dengan retry logic dan rate limit handling."""
         try:
             return provider.generate(
                 system_prompt=system_prompt,
@@ -608,13 +607,17 @@ class StructCodeAgent:
             )
         except Exception as exc:
             err_str = str(exc)
-            if any(t in err_str.lower() for t in ["429", "quota", "rate limit", "rate_limit"]):
+            # Rate limit — no retry
+            if any(t in err_str.lower() for t in ["429", "rate limit", "rate_limit", "too many requests"]):
                 logger.warning(
-                    "Rate limit hit for model=%s — backing off: %s",
+                    "Rate limit hit for model=%s — no retry: %s",
                     provider.model_name,
                     err_str[:120],
                 )
-                time.sleep(2)
+                raise Exception("Rate limit exceeded. Try again in 1 minute.")
+            # Region block — no retry
+            if "location is not supported" in err_str.lower():
+                raise Exception("Model unavailable in this region.")
             raise
 
     def _run_single_model(
@@ -762,7 +765,7 @@ class StructCodeAgent:
         results = {}
 
         # Per-model timeout (detik). Disesuaikan agar total tetap di bawah Gunicorn timeout
-        PER_MODEL_TIMEOUT = 90
+        PER_MODEL_TIMEOUT = 60
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             future_to_model = {
