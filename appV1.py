@@ -394,20 +394,22 @@ def ask_multi():
             language=language,
             existing_model_ids=existing_model_ids,
         )
+        # Pastikan results adalah dict (bukan None)
+        if results is None:
+            results = {}
     except Exception as exc:
         logger.error("ask_multi failed entirely: %s", str(exc)[:200])
-        return jsonify({
-            "error": "All models failed to respond. Please try again with different models.",
-            "results": {},
-            "history_id": str(uuid.uuid4()),
-        }), 200  # Return 200 agar frontend bisa parse, dengan empty results
+        results = {}
 
-    # Generate history ID untuk tracking
+    # Generate history ID
     history_id = str(uuid.uuid4())
 
-    # Hitung statistik
-    successful_models = [r for r in results.values() if not r.get("is_error")]
-    failed_models     = [r for r in results.values() if r.get("is_error")]
+    # Hitung statistik dengan safety check
+    if not isinstance(results, dict):
+        results = {}
+
+    successful_models = [r for r in results.values() if r and not r.get("is_error")]
+    failed_models     = [r for r in results.values() if r and r.get("is_error")]
     avg_exec_time     = (
         sum(r.get("exec_time", 0) for r in successful_models) / len(successful_models)
         if successful_models else 0
@@ -442,7 +444,7 @@ def ask_multi():
     }
     insert_log(col_history, history_entry)
 
-    # Log ke usage juga (untuk analytics)
+    # Log usage
     insert_log(col_usage, {
         **build_base_log(feature),
         "language_used": language,
@@ -462,6 +464,7 @@ def ask_multi():
         },
     })
 
+    # Return — selalu 200 dengan results, frontend yang handle empty/error
     return jsonify({
         "results": results,
         "history_id": history_id,
@@ -471,7 +474,7 @@ def ask_multi():
             "failed": len(failed_models),
             "avg_exec_time": round(avg_exec_time, 2),
         },
-    })
+    }), 200
 
 # ---------------------------------------------------------------------------
 # Routes: History (NEW)

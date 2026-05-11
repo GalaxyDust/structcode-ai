@@ -193,10 +193,12 @@ class OpenAIProvider(LLMProvider):
         try:
             from openai import OpenAI
         except ImportError:
-            raise ImportError(
-                "openai not installed. Run: pip install openai"
-            )
-        self._client = OpenAI(api_key=api_key)
+            raise ImportError("openai not installed. Run: pip install openai")
+        self._client = OpenAI(
+            api_key=api_key,
+            max_retries=0,         # ← TAMBAHKAN
+            timeout=45.0,          # ← TAMBAHKAN
+        )
         self._model_name = model
 
     def generate(
@@ -233,28 +235,21 @@ class OpenAIProvider(LLMProvider):
 #  hanya beda base_url, api_key, dan extra headers)
 # ---------------------------------------------------------------------------
 class OpenRouterProvider(LLMProvider):
-    """
-    Provider untuk OpenRouter.ai
-    Menggunakan OpenAI-compatible API dengan base_url berbeda.
-    Mendukung semua model free yang tersedia di OpenRouter.
-    """
-
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
     def __init__(self, api_key: str, model: str):
         try:
             from openai import OpenAI
         except ImportError:
-            raise ImportError(
-                "openai not installed. Run: pip install openai"
-            )
+            raise ImportError("openai not installed. Run: pip install openai")
 
         self._client = OpenAI(
             api_key=api_key,
             base_url=self.OPENROUTER_BASE_URL,
+            max_retries=0,                      # ← TAMBAHKAN INI: disable internal retry
+            timeout=45.0,                       # ← TAMBAHKAN INI: timeout 45 detik per call
             default_headers={
-                # Header wajib OpenRouter
-                "HTTP-Referer": "https://structcode.app",
+                "HTTP-Referer": "https://structcode-ai.onrender.com",
                 "X-Title": "StructCode - Algorithm Tutor",
             },
         )

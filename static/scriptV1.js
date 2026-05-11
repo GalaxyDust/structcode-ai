@@ -710,10 +710,37 @@ async function askMultiModel(feature, input, extra = "", isFollowUp = false) {
       ));
     }
 
-    if (data.error) throw new Error(data.error);
+    // Cek apakah ada error global
+    if (data.error && !data.results) {
+      throw new Error(data.error);
+    }
+
+    // Jika results kosong & tidak ada existing → semua model gagal
+    const newResults = data.results || {};
+    if (Object.keys(newResults).length === 0 && Object.keys(existingForSameInput).length === 0) {
+      // Bikin error result untuk setiap model yang diminta
+      const errorResults = {};
+      modelIds.forEach((mid) => {
+        const info = AppState.availableModels.find((m) => m.id === mid) || {};
+        errorResults[mid] = {
+          model_id: mid,
+          label: info.label || mid,
+          icon: info.icon || "🤖",
+          persona: info.persona || "",
+          response: "",
+          exec_time: 0,
+          error: t(
+            "All models are currently rate-limited. Please wait or try again tomorrow.",
+            "Semua model sedang rate-limit. Tunggu sebentar atau coba lagi besok."
+          ),
+          is_error: true,
+        };
+      });
+      return errorResults;
+    }
 
     // Merge hasil baru dengan yang existing
-    const mergedResults = { ...existingForSameInput, ...data.results };
+    const mergedResults = { ...existingForSameInput, ...newResults };
 
     AppState.currentResults[feature] = {
       input,
