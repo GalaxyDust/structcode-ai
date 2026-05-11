@@ -385,14 +385,22 @@ def ask_multi():
         model_ids = [DEFAULT_MODEL_ID]
 
     # Jalankan multi-model parallel
-    results = agent.ask_multi(
-        feature=feature,
-        user_input=user_input,
-        model_ids=model_ids,
-        extra_context=extra_context,
-        language=language,
-        existing_model_ids=existing_model_ids,
-    )
+    try:
+        results = agent.ask_multi(
+            feature=feature,
+            user_input=user_input,
+            model_ids=model_ids,
+            extra_context=extra_context,
+            language=language,
+            existing_model_ids=existing_model_ids,
+        )
+    except Exception as exc:
+        logger.error("ask_multi failed entirely: %s", str(exc)[:200])
+        return jsonify({
+            "error": "All models failed to respond. Please try again with different models.",
+            "results": {},
+            "history_id": str(uuid.uuid4()),
+        }), 200  # Return 200 agar frontend bisa parse, dengan empty results
 
     # Generate history ID untuk tracking
     history_id = str(uuid.uuid4())

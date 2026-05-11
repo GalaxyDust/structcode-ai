@@ -598,27 +598,57 @@ class StructCodeAgent:
         system_prompt: str,
         user_prompt: str,
     ) -> str:
-        try:
-            return provider.generate(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                temperature=0.15,
-                max_tokens=4096,
-            )
-        except Exception as exc:
-            err_str = str(exc)
-            # Rate limit — no retry
-            if any(t in err_str.lower() for t in ["429", "rate limit", "rate_limit", "too many requests"]):
-                logger.warning(
-                    "Rate limit hit for model=%s — no retry: %s",
-                    provider.model_name,
-                    err_str[:120],
+        """
+        Generate dengan retry custom (tanpa tenacity untuk error tertentu).
+        Rate limit & region block langsung fail tanpa retry.
+        """
+        max_attempts = 2
+        last_exception = None
+
+        for attempt in range(max_attempts):
+            try:
+                return provider.generate(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=0.15,
+                    max_tokens=4096,
                 )
-                raise Exception("Rate limit exceeded. Try again in 1 minute.")
-            # Region block — no retry
-            if "location is not supported" in err_str.lower():
-                raise Exception("Model unavailable in this region.")
-            raise
+            except Exception as exc:
+                err_str = str(exc).lower()
+                last_exception = exc
+
+                # Rate limit — JANGAN retry, langsung fail
+                if any(t in err_str for t in ["429", "rate limit", "rate_limit", "too many requests"]):
+                    logger.warning(
+                        "Rate limit hit | model=%s | attempt=%d | NO RETRY",
+                        provider.model_name, attempt + 1,
+                    )
+                    raise Exception("RATE_LIMIT: Daily/minute quota exceeded for this model. Try other models or wait.")
+
+                # Region block — JANGAN retry
+                if "location is not supported" in err_str or "region" in err_str:
+                    raise Exception("REGION_BLOCK: Model unavailable in server region.")
+
+                # Quota habis (OpenRouter daily limit)
+                if "insufficient" in err_str or "quota" in err_str or "credits" in err_str:
+                    raise Exception("QUOTA_EXCEEDED: Free quota for this model is exhausted.")
+
+                # Error lain — retry sekali saja dengan wait pendek
+                if attempt < max_attempts - 1:
+                    logger.info(
+                        "Transient error, retrying | model=%s | attempt=%d | error=%s",
+                        provider.model_name, attempt + 1, err_str[:100],
+                    )
+                    time.sleep(2)
+                    continue
+
+                # Sudah max attempts
+                raise
+
+        # Tidak akan sampai sini, tapi jaga-jaga
+        if last_exception:
+            raise last_exception
+        raise Exception("Unknown error")
 
     def _run_single_model(
         self,
@@ -626,46 +656,36 @@ class StructCodeAgent:
         system_prompt: str,
         user_prompt: str,
     ) -> ModelResult:
-        """
-        Jalankan satu model dan return ModelResult.
-        Dipakai sebagai target di ThreadPoolExecutor.
-        """
+        """Jalankan satu model dan return ModelResult."""
         start_time = time.time()
         try:
             provider = self._get_or_create_provider(model_id)
             response = self._generate_with_retry(provider, system_prompt, user_prompt)
             exec_time = time.time() - start_time
-
-            logger.info(
-                "Model completed | model=%s | exec_time=%.2fs",
-                model_id,
-                exec_time,
-            )
-            return ModelResult(
-                model_id=model_id,
-                response=response,
-                exec_time=exec_time,
-            )
+            logger.info("Model OK | model=%s | exec_time=%.2fs", model_id, exec_time)
+            return ModelResult(model_id=model_id, response=response, exec_time=exec_time)
 
         except Exception as exc:
             exec_time = time.time() - start_time
             err_str = str(exc)
 
-            # Deteksi tipe error
-            if any(t in err_str.lower() for t in ["429", "quota", "rate limit", "rate_limit"]):
-                error_msg = "Rate limit exceeded. Please wait before retrying."
+            # Map ke pesan user-friendly
+            if err_str.startswith("RATE_LIMIT:"):
+                error_msg = err_str.replace("RATE_LIMIT:", "⏱️").strip()
+            elif err_str.startswith("REGION_BLOCK:"):
+                error_msg = err_str.replace("REGION_BLOCK:", "🌍").strip()
+            elif err_str.startswith("QUOTA_EXCEEDED:"):
+                error_msg = err_str.replace("QUOTA_EXCEEDED:", "💸").strip()
             elif "timeout" in err_str.lower():
-                error_msg = "Request timed out. The model may be busy."
+                error_msg = "⏱️ Model response timed out."
             elif "api key" in err_str.lower() or "authentication" in err_str.lower():
-                error_msg = "API key error. Please check configuration."
+                error_msg = "🔑 API key issue. Please check configuration."
             else:
                 error_msg = err_str[:200]
 
             logger.error(
                 "Model failed | model=%s | exec_time=%.2fs | error=%s",
-                model_id,
-                exec_time,
-                err_str[:200],
+                model_id, exec_time, err_str[:200],
             )
             return ModelResult(
                 model_id=model_id,
@@ -763,9 +783,7 @@ class StructCodeAgent:
         user_prompt = self._build_user_prompt(user_input, extra_context)
 
         results = {}
-
-        # Per-model timeout (detik). Disesuaikan agar total tetap di bawah Gunicorn timeout
-        PER_MODEL_TIMEOUT = 60
+        PER_MODEL_TIMEOUT = 50  # seconds
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             future_to_model = {
@@ -778,40 +796,42 @@ class StructCodeAgent:
                 for model_id in models_to_run
             }
 
-            # Iterate dengan timeout per future
-            for future in concurrent.futures.as_completed(future_to_model, timeout=PER_MODEL_TIMEOUT + 10):
-                model_id = future_to_model[future]
-                try:
-                    result = future.result(timeout=PER_MODEL_TIMEOUT)
-                    results[model_id] = result.to_dict()
-                except concurrent.futures.TimeoutError:
-                    logger.warning(
-                        "Model timed out | model=%s | timeout=%ds",
-                        model_id, PER_MODEL_TIMEOUT
-                    )
+            # Iterate dengan timeout total — wrap dalam try-catch agar tidak crash
+            try:
+                for future in concurrent.futures.as_completed(
+                    future_to_model,
+                    timeout=PER_MODEL_TIMEOUT + 15,
+                ):
+                    model_id = future_to_model[future]
+                    try:
+                        result = future.result(timeout=1)  # sudah selesai, ambil cepat
+                        results[model_id] = result.to_dict()
+                    except Exception as exc:
+                        logger.error(
+                            "Future error | model=%s | error=%s",
+                            model_id, str(exc)[:200],
+                        )
+                        results[model_id] = ModelResult(
+                            model_id=model_id,
+                            error=str(exc)[:200],
+                        ).to_dict()
+            except concurrent.futures.TimeoutError:
+                # Timeout global - sebagian model belum selesai
+                logger.warning(
+                    "Global timeout reached | completed=%d/%d",
+                    len(results), len(future_to_model),
+                )
+
+            # Catat model yang belum selesai sebagai timeout
+            for future, model_id in future_to_model.items():
+                if model_id not in results:
+                    if not future.done():
+                        future.cancel()
                     results[model_id] = ModelResult(
                         model_id=model_id,
                         exec_time=PER_MODEL_TIMEOUT,
-                        error=f"Model timed out after {PER_MODEL_TIMEOUT}s. Try a faster/smaller model.",
+                        error="⏱️ Model timed out. Try a faster model or fewer models.",
                     ).to_dict()
-                except Exception as exc:
-                    logger.error(
-                        "Unexpected error in ask_multi | model=%s | error=%s",
-                        model_id, str(exc)[:200],
-                    )
-                    results[model_id] = ModelResult(
-                        model_id=model_id,
-                        error=str(exc)[:200],
-                    ).to_dict()
-
-        # Catat model yang tidak sempat di-process
-        processed_models = set(results.keys())
-        for model_id in models_to_run:
-            if model_id not in processed_models:
-                results[model_id] = ModelResult(
-                    model_id=model_id,
-                    error="Model did not respond in time.",
-                ).to_dict()
 
     def explore(self, keyword: str, language: str = "en") -> str:
         """Inline keyword exploration (single model, default Gemini)."""

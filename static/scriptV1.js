@@ -890,13 +890,32 @@ function createModelResponseCard(result, modelId, feature, queryText) {
   body.className = "model-card-body";
 
   if (isError) {
-    body.innerHTML = `<div class="error-message">⚠ ${escapeHtml(result.error || "Unknown error")}</div>`;
+    const errMsg = result.error || "Unknown error";
+    // Cek tipe error untuk pesan yang lebih baik
+    let helpfulMsg = "";
+    if (errMsg.includes("⏱️") || errMsg.toLowerCase().includes("rate") || errMsg.toLowerCase().includes("quota")) {
+      helpfulMsg = `<p style="margin-top:8px;font-size:0.82rem;color:var(--text-dim);">${t(
+        "💡 Tip: Try selecting a different model or wait 1 minute.",
+        "💡 Tip: Coba pilih model lain atau tunggu 1 menit."
+      )}</p>`;
+    } else if (errMsg.includes("🌍") || errMsg.toLowerCase().includes("region")) {
+      helpfulMsg = `<p style="margin-top:8px;font-size:0.82rem;color:var(--text-dim);">${t(
+        "💡 This model is not available in the server region.",
+        "💡 Model ini tidak tersedia di region server."
+      )}</p>`;
+    }
+    body.innerHTML = `
+      <div class="error-message">
+        ⚠ ${escapeHtml(errMsg)}
+        ${helpfulMsg}
+      </div>
+    `;
   } else {
     body.innerHTML = renderFeatureContent(feature, result.response || "", queryText);
   }
   card.appendChild(body);
 
-  // Footer (rating)
+  // Footer (rating) — hanya jika tidak error
   if (!isError) {
     const footer = document.createElement("div");
     footer.className = "model-card-footer";
