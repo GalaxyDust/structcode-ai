@@ -6,268 +6,429 @@
   <title>StructCode V1 — Algorithm & Pseudocode Tutor</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>" />
   <link rel="stylesheet" href="/static/styleV1.css" />
-  <!-- Inline CSS khusus untuk halaman Overlay Login di Fase 1 -->
-  <style>
-    .login-overlay {
-      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); z-index: 10000;
-      display: flex; align-items: center; justify-content: center;
-      backdrop-filter: blur(5px);
-    }
-    .login-overlay.hidden { display: none !important; }
-    .login-box {
-      background: var(--bg-panel, #252526); padding: 30px; border-radius: 8px; width: 100%; max-width: 400px;
-      box-shadow: 0 10px 40px rgba(0,0,0,0.8); border: 1px solid var(--border, #3e3e42); color: #ccc;
-      font-family: 'Segoe UI', sans-serif;
-    }
-    .login-box h2 { text-align: center; color: #fff; margin-bottom: 20px; }
-    .login-form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-    .login-form-group label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold; }
-    .login-form-group input { padding: 10px; border-radius: 4px; border: 1px solid #4a4a4f; background: #141414; color: #fff; }
-    .login-form-group input:focus { outline: none; border-color: #007acc; }
-    .login-actions { display: flex; gap: 10px; margin-top: 20px; flex-direction: column; }
-    .login-error { background: #f4433620; color: #f44336; padding: 10px; font-size: 13px; border-radius: 4px; border: 1px solid #f44336; display: none; margin-bottom: 15px;}
-  </style>
 </head>
 <body>
 
-  <!-- LOGIN OVERLAY -->
+  <!-- ================================================================== -->
+  <!-- LOGIN OVERLAY                                                       -->
+  <!-- ================================================================== -->
   <div id="login-overlay" class="login-overlay">
     <div class="login-box">
-       <h2 data-en="Sign In to StructCode" data-id="Masuk ke StructCode">Masuk ke StructCode</h2>
-       
-       <div id="login-error-msg" class="login-error"></div>
+      <div class="login-logo">🎓</div>
+      <h2 data-en="Sign In to StructCode" data-id="Masuk ke StructCode">Masuk ke StructCode</h2>
+      <p class="login-subtitle" data-en="Algorithm & Pseudocode Learning Assistant" data-id="Asisten Belajar Algoritma & Pseudocode">Asisten Belajar Algoritma & Pseudocode</p>
 
-       <form id="login-form">
-          <div class="login-form-group">
-            <label data-en="Full Name" data-id="Nama Lengkap">Nama Lengkap</label>
-            <input type="text" id="login-name" required placeholder="John Doe" />
-          </div>
-          <div class="login-form-group">
-            <label data-en="NIM / NIP (for Teachers)" data-id="NIM / NIP (Untuk Dosen)">NIM / NIP (Untuk Dosen)</label>
-            <input type="text" id="login-nim" required placeholder="NIM Anda" />
-          </div>
-          <div class="login-form-group">
-            <label data-en="Class Code (e.g., if4501)" data-id="Kode Kelas (Contoh: if4501)">Kode Kelas (Contoh: if4501)</label>
-            <input type="text" id="login-kelas" required placeholder="if4501" />
-          </div>
-          
-          <div class="login-actions">
-            <button type="submit" class="btn btn-primary" style="width: 100%;" data-en="Sign In" data-id="Masuk">Masuk</button>
-          </div>
-       </form>
+      <div id="login-error-msg" class="login-error"></div>
+
+      <form id="login-form">
+        <div class="login-form-group">
+          <label data-en="Full Name" data-id="Nama Lengkap">Nama Lengkap</label>
+          <input type="text" id="login-name" required placeholder="John Doe" autocomplete="name" />
+        </div>
+        <div class="login-form-group">
+          <label data-en="NIM / NIP (for Teachers)" data-id="NIM / NIP (Untuk Dosen)">NIM / NIP (Untuk Dosen)</label>
+          <input type="text" id="login-nim" required placeholder="NIM Anda" autocomplete="username" />
+        </div>
+        <div class="login-form-group">
+          <label data-en="Class Code (e.g., if4501)" data-id="Kode Kelas (Contoh: if4501)">Kode Kelas (Contoh: if4501)</label>
+          <input type="text" id="login-kelas" required placeholder="if4501" />
+        </div>
+
+        <div class="login-actions">
+          <button type="submit" class="btn btn-primary btn-login-submit" data-en="Sign In" data-id="Masuk">Masuk</button>
+        </div>
+      </form>
     </div>
   </div>
 
+  <!-- ================================================================== -->
+  <!-- DISCLAIMER BANNER                                                   -->
+  <!-- ================================================================== -->
   <div id="disclaimer-banner" class="disclaimer-banner hidden" role="alert" aria-live="polite">
     <div class="disclaimer-content">
       <span class="disclaimer-icon">ℹ</span>
-      <span class="disclaimer-text" id="ui-text-disclaimer" data-en="AI-Generated Content: Responses are produced by a language model and may contain errors. StructCode guides your thinking — not providing direct solutions." data-id="Konten Berbasis AI: Respons dibuat oleh model bahasa dan bisa saja terdapat error. StructCode didesain untuk memandu pemikiran Anda — bukan memberi kunci jawaban langsung.">
-        AI-Generated Content: Responses are produced by a language model and may contain errors. StructCode guides your thinking — not providing direct solutions.
+      <span class="disclaimer-text" id="ui-text-disclaimer"
+        data-en="AI-Generated Content: Responses are produced by language models and may contain errors. StructCode guides your thinking — not providing direct solutions."
+        data-id="Konten Berbasis AI: Respons dibuat oleh model bahasa dan bisa saja terdapat error. StructCode didesain untuk memandu pemikiran Anda — bukan memberi kunci jawaban langsung.">
+        AI-Generated Content: Responses are produced by language models and may contain errors.
       </span>
     </div>
     <button class="disclaimer-close" aria-label="Dismiss disclaimer" onclick="dismissDisclaimer()" data-en="Got it" data-id="Mengerti">Got it</button>
   </div>
 
+  <!-- ================================================================== -->
+  <!-- MAIN APPLICATION SHELL                                              -->
+  <!-- ================================================================== -->
   <div class="app" role="application">
-    
-    <!-- SIDEBAR -->
-    <aside class="sidebar" role="navigation">
+
+    <!-- ============================================================== -->
+    <!-- SIDEBAR                                                         -->
+    <!-- ============================================================== -->
+    <aside class="sidebar" id="sidebar-panel" role="navigation">
       <div class="brand">
         <div class="brand-name"><span class="brand-icon">🎓</span> StructCode</div>
-        <div class="brand-version">Baseline V1 &nbsp;•&nbsp; UI Revised</div>
+        <div class="brand-version">V1 Multi-Model &nbsp;•&nbsp; Pedagogical AI</div>
       </div>
-      
+
       <div class="provider-badge-wrap">
-        <button class="provider-badge" id="btn-provider-settings" onclick="openModelSettings()" title="Klik untuk ganti AI Model">
-          <span class="provider-dot"></span> 
-          <span id="display-active-model" style="font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Loading...</span>
-          <span>⚙️</span>
-        </button>
+        <div class="provider-badge" id="provider-badge" title="Checking LLM system...">
+          <span class="provider-dot"></span>
+          <span data-en="Loading provider..." data-id="Memuat AI...">Loading provider...</span>
+        </div>
       </div>
 
       <div class="sidebar-divider"></div>
 
-      <div class="sidebar-section-label" id="ui-lbl-features" data-en="Features" data-id="Fitur">Features</div>
+      <!-- Feature Navigation -->
+      <div class="sidebar-section-label" data-en="Features" data-id="Fitur">Features</div>
       <nav class="features" role="menubar">
         <button class="feature-btn active" data-feature="general" role="menuitem">
-          <span class="feature-icon">❓</span> <span class="feature-label" data-en="General Question" data-id="Pertanyaan Umum">General Question</span>
+          <span class="feature-icon">❓</span>
+          <span class="feature-label" data-en="General Question" data-id="Pertanyaan Umum">General Question</span>
         </button>
         <button class="feature-btn" data-feature="from_code" role="menuitem">
-          <span class="feature-icon">💻</span> <span class="feature-label" data-en="Question from Pseudocode" data-id="Dari Pseudocode">Question from Pseudocode</span>
+          <span class="feature-icon">💻</span>
+          <span class="feature-label" data-en="Question from Pseudocode" data-id="Dari Pseudocode">Question from Pseudocode</span>
         </button>
         <button class="feature-btn" data-feature="explain" role="menuitem">
-          <span class="feature-icon">📖</span> <span class="feature-label" data-en="Explain Pseudocode" data-id="Jelaskan Pseudocode">Explain Pseudocode</span>
+          <span class="feature-icon">📖</span>
+          <span class="feature-label" data-en="Explain Pseudocode" data-id="Jelaskan Pseudocode">Explain Pseudocode</span>
         </button>
         <button class="feature-btn" data-feature="help_fix" role="menuitem">
-          <span class="feature-icon">🔧</span> <span class="feature-label" data-en="Help Fix Pseudocode" data-id="Bantu Perbaiki Bug">Help Fix Pseudocode</span>
+          <span class="feature-icon">🔧</span>
+          <span class="feature-label" data-en="Help Fix Pseudocode" data-id="Bantu Perbaiki Bug">Help Fix Pseudocode</span>
         </button>
         <button class="feature-btn" data-feature="help_write" role="menuitem">
-          <span class="feature-icon">🛠</span> <span class="feature-label" data-en="Help Write Pseudocode" data-id="Bantu Tulis Algoritma">Help Write Pseudocode</span>
+          <span class="feature-icon">🛠</span>
+          <span class="feature-label" data-en="Help Write Pseudocode" data-id="Bantu Tulis Algoritma">Help Write Pseudocode</span>
         </button>
       </nav>
 
       <div class="sidebar-divider"></div>
-      
+
+      <!-- Model Selector Dropdown -->
+      <div class="sidebar-section-label" data-en="AI Models" data-id="Model AI">AI Models</div>
+      <div class="model-selector-wrap">
+        <button class="model-selector-toggle" id="model-selector-toggle" onclick="toggleModelDropdown()">
+          <span class="model-selector-icon">🤖</span>
+          <span class="model-selector-text" id="model-selector-text"
+            data-en="1 model selected" data-id="1 model dipilih">1 model selected</span>
+          <span class="model-selector-arrow" id="model-selector-arrow">▼</span>
+        </button>
+
+        <div class="model-dropdown hidden" id="model-dropdown">
+          <div class="model-dropdown-header">
+            <span class="model-dropdown-title" data-en="Select up to 3 models" data-id="Pilih hingga 3 model">Select up to 3 models</span>
+            <span class="model-dropdown-count" id="model-count-badge">1/3</span>
+          </div>
+          <div class="model-dropdown-list" id="model-dropdown-list">
+            <!-- Populated by JS via /api/models -->
+            <div class="model-dropdown-loading">
+              <div class="typing-dots"><span></span><span></span><span></span></div>
+              <span data-en="Loading models..." data-id="Memuat model...">Loading models...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-divider"></div>
+
+      <!-- Research Tools -->
       <div class="sidebar-section-label" data-en="Research Tools" data-id="Alat Riset">Research Tools</div>
       <div class="sidebar-actions">
         <button class="sidebar-action-btn" onclick="openSurveyModal()">
-          <span>📝</span> <span data-en="Weekly Survey" data-id="Survei Mingguan">Weekly Survey</span>
+          <span>📝</span>
+          <span data-en="Weekly Survey" data-id="Survei Mingguan">Weekly Survey</span>
         </button>
-        
-        <!-- Tombol Analytics HANYA ditambahkan bagi Dosen. Default-nya sembunyi -->
         <button id="btn-sidebar-analytics" class="sidebar-action-btn" style="display: none;" onclick="loadAnalytics()">
-          <span>📊</span> <span data-en="Class Analytics" data-id="Analitik Kelas">Class Analytics</span>
+          <span>📊</span>
+          <span data-en="Class Analytics" data-id="Analitik Kelas">Class Analytics</span>
         </button>
       </div>
     </aside>
 
-    <!-- MAIN CONTENT -->
-    <main class="main" role="main">
-      <header class="topbar">
-        <div class="topbar-left" style="display: flex; align-items: center; gap: 10px; min-width: 0;">
-          <!-- Burger Button (Hanya muncul di Mobile) -->
-          <button id="btn-burger" class="btn btn-ghost btn-sm" style="display: none; padding: 4px 8px; font-size: 1.2rem;">☰</button>
-          <h2 id="feature-title" data-en="General Question" data-id="Pertanyaan Umum" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">General Question</h2>
-        </div>
-        
-        <div class="topbar-right" style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
-          <div id="user-info" style="display: none; align-items: center; gap: 10px; border-right: 1px solid var(--border); padding-right: 10px;">
-            <span id="display-user-name" style="font-size: 13px; color: var(--text-bright); font-weight: 600; display: none;"></span> <!-- Sembunyi di HP kecil -->
-            <button class="btn btn-ghost btn-sm" onclick="handleLogout()" data-en="Logout" data-id="Keluar" style="padding: 4px 8px;">Keluar</button>
+    <!-- ============================================================== -->
+    <!-- MOBILE BOTTOM NAV (hanya muncul < 768px)                        -->
+    <!-- ============================================================== -->
+    <nav class="mobile-bottom-nav" id="mobile-bottom-nav">
+      <button class="mobile-nav-btn active" data-feature="general" onclick="switchView('general')">
+        <span class="mobile-nav-icon">❓</span>
+        <span class="mobile-nav-label" data-en="General" data-id="Umum">General</span>
+      </button>
+      <button class="mobile-nav-btn" data-feature="from_code" onclick="switchView('from_code')">
+        <span class="mobile-nav-icon">💻</span>
+        <span class="mobile-nav-label" data-en="Code" data-id="Kode">Code</span>
+      </button>
+      <button class="mobile-nav-btn" data-feature="explain" onclick="switchView('explain')">
+        <span class="mobile-nav-icon">📖</span>
+        <span class="mobile-nav-label" data-en="Explain" data-id="Jelaskan">Explain</span>
+      </button>
+      <button class="mobile-nav-btn" data-feature="help_fix" onclick="switchView('help_fix')">
+        <span class="mobile-nav-icon">🔧</span>
+        <span class="mobile-nav-label" data-en="Fix" data-id="Fix">Fix</span>
+      </button>
+      <button class="mobile-nav-btn" data-feature="help_write" onclick="switchView('help_write')">
+        <span class="mobile-nav-icon">🛠</span>
+        <span class="mobile-nav-label" data-en="Write" data-id="Tulis">Write</span>
+      </button>
+      <button class="mobile-nav-btn mobile-nav-more" onclick="toggleMobileMoreMenu()">
+        <span class="mobile-nav-icon">⋯</span>
+        <span class="mobile-nav-label" data-en="More" data-id="Lagi">More</span>
+      </button>
+    </nav>
+
+    <!-- Mobile More Menu (Model selector + tools di mobile) -->
+    <div class="mobile-more-menu hidden" id="mobile-more-menu">
+      <div class="mobile-more-header">
+        <h3 data-en="Settings & Models" data-id="Pengaturan & Model">Settings & Models</h3>
+        <button class="popup-close-btn" onclick="toggleMobileMoreMenu()">×</button>
+      </div>
+      <div class="mobile-more-body">
+        <div class="mobile-model-section">
+          <div class="sidebar-section-label" data-en="AI Models (max 3)" data-id="Model AI (maks 3)">AI Models (max 3)</div>
+          <div class="model-dropdown-list mobile-model-list" id="mobile-model-list">
+            <!-- Populated by JS -->
           </div>
-          <button id="btn-lang-toggle" class="lang-toggle" onclick="toggleLanguage()" title="Switch Language">🌐 EN</button>
+        </div>
+        <div class="mobile-tools-section">
+          <button class="sidebar-action-btn" onclick="openSurveyModal(); toggleMobileMoreMenu();">
+            <span>📝</span>
+            <span data-en="Weekly Survey" data-id="Survei Mingguan">Weekly Survey</span>
+          </button>
+          <button id="btn-mobile-analytics" class="sidebar-action-btn" style="display: none;" onclick="loadAnalytics(); toggleMobileMoreMenu();">
+            <span>📊</span>
+            <span data-en="Class Analytics" data-id="Analitik Kelas">Class Analytics</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- MAIN CONTENT AREA                                               -->
+    <!-- ============================================================== -->
+    <main class="main" role="main">
+
+      <!-- TOPBAR -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <!-- Hamburger for mobile (show sidebar) -->
+          <button class="mobile-hamburger" id="mobile-hamburger" onclick="toggleMobileMoreMenu()" aria-label="Menu">
+            <span></span><span></span><span></span>
+          </button>
+          <h2 id="feature-title" data-en="General Question" data-id="Pertanyaan Umum">General Question</h2>
+        </div>
+
+        <div class="topbar-right">
+          <!-- User Info & Logout -->
+          <div id="user-info" class="user-info-bar" style="display: none;">
+            <span id="display-user-name" class="user-display-name"></span>
+            <button class="btn btn-ghost btn-sm btn-logout" onclick="handleLogout()" data-en="Logout" data-id="Keluar">Keluar</button>
+          </div>
+
+          <button id="btn-lang-toggle" class="lang-toggle" onclick="toggleLanguage()" title="Switch Language">
+            🌐 English
+          </button>
+          <span class="model-badge-topbar" id="model-badge-topbar">StructCode V1</span>
         </div>
       </header>
 
-      <!-- GENERAL VIEW -->
+      <!-- ============================================================ -->
+      <!-- VIEW: GENERAL QUESTION (Chat)                                 -->
+      <!-- ============================================================ -->
       <section id="view-general" class="view active">
         <div id="chat-general" class="chat-area" aria-live="polite">
           <div class="empty-state">
             <span class="empty-state-icon">🤖</span>
             <h3 data-en="Welcome to StructCode V1" data-id="Selamat Datang di StructCode V1">Welcome to StructCode V1</h3>
-            <p data-en="Ask conceptual questions — StructCode guides your thinking without giving away direct solutions." data-id="Ajukan pertanyaan konsep — StructCode akan memandu logika berpikir Anda tanpa memberikan jawaban mentah secara langsung.">
+            <p data-en="Ask conceptual questions — StructCode guides your thinking without giving away direct solutions. Compare responses from multiple AI models."
+               data-id="Ajukan pertanyaan konsep — StructCode akan memandu logika berpikir Anda. Bandingkan respons dari beberapa model AI sekaligus.">
               Ask conceptual questions — StructCode guides your thinking without giving away direct solutions.
             </p>
+            <div class="empty-state-models">
+              <span data-en="Active models will appear below each response" data-id="Model aktif akan muncul di bawah tiap respons">Active models will appear below each response</span>
+            </div>
           </div>
         </div>
 
         <div class="composer">
-          <p class="composer-hint" data-en="Ask a conceptual question about algorithms (Press Enter to send, Shift+Enter for new line):" data-id="Tanyakan konsep algoritma atau pseudocode (Tekan Enter untuk kirim, Shift+Enter untuk baris baru):">Ask a conceptual question about algorithms (Press Enter to send, Shift+Enter for new line):</p>
+          <p class="composer-hint"
+            data-en="Ask a conceptual question about algorithms (Press Enter to send, Shift+Enter for new line):"
+            data-id="Tanyakan konsep algoritma atau pseudocode (Tekan Enter untuk kirim, Shift+Enter untuk baris baru):">
+            Ask a conceptual question about algorithms (Press Enter to send, Shift+Enter for new line):
+          </p>
           <div class="composer-row">
-            <textarea id="input-general" class="composer-input" data-en-placeholder="E.g.: What is the difference between Merge Sort and Quick Sort?" data-id-placeholder="Contoh: Apa perbedaan konsep dari Merge Sort dan Quick Sort?" placeholder="E.g.: What is the difference between Merge Sort and Quick Sort?" rows="2"></textarea>
-            <div style="display: flex; flex-direction: column; gap: 6px;">
-              <button id="btn-ask-general" class="btn btn-primary" onclick="submitGeneral()" data-en="Ask 🚀" data-id="Tanya 🚀">Ask 🚀</button>
-              <button id="btn-clear-general" class="btn btn-ghost btn-sm" onclick="clearView('general')" data-en="Clear" data-id="Hapus">Clear</button>
+            <textarea id="input-general" class="composer-input"
+              data-en-placeholder="E.g.: What is the difference between Merge Sort and Quick Sort?"
+              data-id-placeholder="Contoh: Apa perbedaan konsep dari Merge Sort dan Quick Sort?"
+              placeholder="E.g.: What is the difference between Merge Sort and Quick Sort?"
+              rows="2"></textarea>
+            <div class="composer-actions">
+              <button id="btn-ask-general" class="btn btn-primary" onclick="submitGeneral()"
+                data-en="Ask 🚀" data-id="Tanya 🚀">Ask 🚀</button>
+              <button id="btn-clear-general" class="btn btn-ghost btn-sm" onclick="clearView('general')"
+                data-en="Clear" data-id="Hapus">Clear</button>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- FROM CODE VIEW -->
+      <!-- ============================================================ -->
+      <!-- VIEW: QUESTION FROM CODE (Split Panel)                        -->
+      <!-- ============================================================ -->
       <section id="view-from_code" class="view">
         <div class="split-panel">
           <div class="panel-input">
             <span class="panel-label" data-en="Your Pseudocode" data-id="Pseudocode Anda">Your Pseudocode</span>
             <div class="code-input-container">
               <div id="ln-code-from_code" class="line-numbers">1</div>
-              <textarea id="code-from_code" data-en-placeholder="Paste your pseudocode here..." data-id-placeholder="Tempel pseudocode Anda di sini..." placeholder="Paste your pseudocode here..." spellcheck="false"></textarea>
+              <textarea id="code-from_code"
+                data-en-placeholder="Paste your pseudocode here..."
+                data-id-placeholder="Tempel pseudocode Anda di sini..."
+                placeholder="Paste your pseudocode here..." spellcheck="false"></textarea>
             </div>
-            
-            <span class="panel-label" style="margin-top: 8px;" data-en="Your Question" data-id="Pertanyaan Anda">Your Question</span>
-            <textarea id="q-from_code" data-en-placeholder="What do you want to ask about the pseudocode above?" data-id-placeholder="Apa yang ingin Anda tanyakan tentang kode di atas?" placeholder="What do you want to ask about the pseudocode above?" rows="3"></textarea>
-            
+
+            <span class="panel-label" style="margin-top: 8px;"
+              data-en="Your Question" data-id="Pertanyaan Anda">Your Question</span>
+            <textarea id="q-from_code"
+              data-en-placeholder="What do you want to ask about the pseudocode above?"
+              data-id-placeholder="Apa yang ingin Anda tanyakan tentang kode di atas?"
+              placeholder="What do you want to ask about the pseudocode above?" rows="3"></textarea>
+
             <div class="bar-actions" style="padding: 0; border: none; margin-top: 4px;">
-              <button class="btn btn-ghost btn-sm" onclick="clearView('from_code')" data-en="Clear" data-id="Hapus">Clear</button>
-              <button class="btn btn-primary" onclick="submitFromCode()" data-en="Ask" data-id="Tanya">Ask</button>
+              <button class="btn btn-ghost btn-sm" onclick="clearView('from_code')"
+                data-en="Clear" data-id="Hapus">Clear</button>
+              <button class="btn btn-primary" onclick="submitFromCode()"
+                data-en="Ask" data-id="Tanya">Ask</button>
             </div>
           </div>
+
           <div class="resizer"></div>
+
           <div class="panel-output">
             <div id="output-from_code">
               <div class="empty-state">
                 <span class="empty-state-icon">💻</span>
-                <p data-en="Response will appear here. Paste pseudocode and ask your question." data-id="Respons akan muncul di sini. Tempel kode dan ajukan pertanyaan Anda.">Response will appear here. Paste pseudocode and ask your question.</p>
+                <p data-en="Response will appear here. Paste pseudocode and ask your question."
+                   data-id="Respons akan muncul di sini. Tempel kode dan ajukan pertanyaan Anda.">
+                  Response will appear here. Paste pseudocode and ask your question.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- EXPLAIN VIEW -->
+      <!-- ============================================================ -->
+      <!-- VIEW: EXPLAIN CODE (Split Panel)                              -->
+      <!-- ============================================================ -->
       <section id="view-explain" class="view">
         <div class="split-panel">
           <div class="panel-input">
             <span class="panel-label" data-en="Pseudocode to Explain" data-id="Pseudocode untuk Dijelaskan">Pseudocode to Explain</span>
             <div class="code-input-container">
               <div id="ln-code-explain" class="line-numbers">1</div>
-              <textarea id="code-explain" data-en-placeholder="Paste pseudocode to explain..." data-id-placeholder="Tempel pseudocode untuk dijelaskan baris per baris..." placeholder="Paste pseudocode to explain..." spellcheck="false"></textarea>
+              <textarea id="code-explain"
+                data-en-placeholder="Paste pseudocode to explain..."
+                data-id-placeholder="Tempel pseudocode untuk dijelaskan baris per baris..."
+                placeholder="Paste pseudocode to explain..." spellcheck="false"></textarea>
             </div>
-            
+
             <div class="bar-actions" style="padding: 0; border: none; margin-top: 4px;">
-              <button class="btn btn-ghost btn-sm" onclick="clearView('explain')" data-en="Clear" data-id="Hapus">Clear</button>
-              <button class="btn btn-primary" onclick="submitExplain()" data-en="Explain" data-id="Jelaskan">Explain</button>
+              <button class="btn btn-ghost btn-sm" onclick="clearView('explain')"
+                data-en="Clear" data-id="Hapus">Clear</button>
+              <button class="btn btn-primary" onclick="submitExplain()"
+                data-en="Explain" data-id="Jelaskan">Explain</button>
             </div>
           </div>
+
           <div class="resizer"></div>
+
           <div class="panel-output">
             <div id="output-explain">
               <div class="empty-state">
                 <span class="empty-state-icon">📖</span>
-                <p data-en="Line-by-line explanation will appear here." data-id="Penjelasan kode per baris akan tampil di sini.">Line-by-line explanation will appear here.</p>
+                <p data-en="Line-by-line explanation will appear here."
+                   data-id="Penjelasan kode per baris akan tampil di sini.">
+                  Line-by-line explanation will appear here.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- HELP FIX VIEW -->
+      <!-- ============================================================ -->
+      <!-- VIEW: HELP FIX CODE (Split Panel)                             -->
+      <!-- ============================================================ -->
       <section id="view-help_fix" class="view">
         <div class="split-panel">
           <div class="panel-input">
             <span class="panel-label" data-en="Buggy Pseudocode" data-id="Kode Error / Bug">Buggy Pseudocode</span>
             <div class="code-input-container">
               <div id="ln-code-help_fix" class="line-numbers">1</div>
-              <textarea id="code-help_fix" data-en-placeholder="Paste your pseudocode with issues here..." data-id-placeholder="Tempel pseudocode yang error di sini..." placeholder="Paste your pseudocode with issues here..." spellcheck="false"></textarea>
+              <textarea id="code-help_fix"
+                data-en-placeholder="Paste your pseudocode with issues here..."
+                data-id-placeholder="Tempel pseudocode yang error di sini..."
+                placeholder="Paste your pseudocode with issues here..." spellcheck="false"></textarea>
             </div>
-            
-            <span class="panel-label" style="margin-top: 8px;" data-en="Intended Behavior" data-id="Tujuan / Logika yang Diinginkan">Intended Behavior</span>
-            <textarea id="intent-help_fix" data-en-placeholder="Describe what this pseudocode should do..." data-id-placeholder="Jelaskan apa yang sebenarnya kode ini harus lakukan..." placeholder="Describe what this pseudocode should do..." rows="3"></textarea>
+
+            <span class="panel-label" style="margin-top: 8px;"
+              data-en="Intended Behavior" data-id="Tujuan / Logika yang Diinginkan">Intended Behavior</span>
+            <textarea id="intent-help_fix"
+              data-en-placeholder="Describe what this pseudocode should do..."
+              data-id-placeholder="Jelaskan apa yang sebenarnya kode ini harus lakukan..."
+              placeholder="Describe what this pseudocode should do..." rows="3"></textarea>
 
             <div class="bar-actions" style="padding: 0; border: none; margin-top: 4px;">
-              <button class="btn btn-ghost btn-sm" onclick="clearView('help_fix')" data-en="Clear" data-id="Hapus">Clear</button>
-              <button class="btn btn-primary" onclick="submitHelpFix()" data-en="Help Fix" data-id="Bantu Fix">Help Fix</button>
+              <button class="btn btn-ghost btn-sm" onclick="clearView('help_fix')"
+                data-en="Clear" data-id="Hapus">Clear</button>
+              <button class="btn btn-primary" onclick="submitHelpFix()"
+                data-en="Help Fix" data-id="Bantu Fix">Help Fix</button>
             </div>
           </div>
+
           <div class="resizer"></div>
+
           <div class="panel-output">
             <div id="output-help_fix">
               <div class="empty-state">
                 <span class="empty-state-icon">🔧</span>
-                <p data-en="Bug suggestions will appear here." data-id="Saran dan hint letak error kode akan muncul di sini.">Bug suggestions will appear here.</p>
+                <p data-en="Bug suggestions will appear here."
+                   data-id="Saran dan hint letak error kode akan muncul di sini.">
+                  Bug suggestions will appear here.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- HELP WRITE VIEW -->
+      <!-- ============================================================ -->
+      <!-- VIEW: HELP WRITE CODE (Split Panel)                           -->
+      <!-- ============================================================ -->
       <section id="view-help_write" class="view">
         <div class="split-panel">
           <div class="panel-input">
             <span class="panel-label" data-en="Algorithm Description" data-id="Deskripsi Algoritma">Algorithm Description</span>
-            <textarea id="input-help_write" data-en-placeholder="Describe the algorithm you want to design..." data-id-placeholder="Jelaskan program yang ingin Anda rancang..." placeholder="Describe the algorithm you want to design..." rows="8"></textarea>
-            
+            <textarea id="input-help_write"
+              data-en-placeholder="Describe the algorithm you want to design..."
+              data-id-placeholder="Jelaskan program yang ingin Anda rancang..."
+              placeholder="Describe the algorithm you want to design..." rows="8"></textarea>
+
             <div class="bar-actions" style="padding: 0; border: none; margin-top: 4px;">
-              <button class="btn btn-ghost btn-sm" onclick="clearView('help_write')" data-en="Clear" data-id="Hapus">Clear</button>
-              <button class="btn btn-primary" onclick="submitHelpWrite()" data-en="Help Write" data-id="Bantu Desain">Help Write</button>
+              <button class="btn btn-ghost btn-sm" onclick="clearView('help_write')"
+                data-en="Clear" data-id="Hapus">Clear</button>
+              <button class="btn btn-primary" onclick="submitHelpWrite()"
+                data-en="Help Write" data-id="Bantu Desain">Help Write</button>
             </div>
           </div>
+
           <div class="resizer"></div>
+
           <div class="panel-output">
             <div id="output-help_write">
               <div class="empty-state">
                 <span class="empty-state-icon">🛠</span>
-                <p data-en="Task breakdown will appear here." data-id="Tugas konseptual secara terurut (breakdown) akan muncul di sini.">Task breakdown will appear here.</p>
+                <p data-en="Task breakdown will appear here."
+                   data-id="Tugas konseptual secara terurut (breakdown) akan muncul di sini.">
+                  Task breakdown will appear here.</p>
               </div>
             </div>
           </div>
@@ -277,7 +438,9 @@
     </main>
   </div>
 
-  <!-- POPUP INLINE KEYWORD -->
+  <!-- ================================================================== -->
+  <!-- INLINE KEYWORD POPUP                                                -->
+  <!-- ================================================================== -->
   <div id="inline-popup" class="inline-popup hidden">
     <div class="popup-header">
       <strong id="popup-keyword">Concept</strong>
@@ -286,114 +449,51 @@
     <div id="popup-body" class="popup-body"></div>
   </div>
 
-  <div id="rating-modal" class="modal-overlay hidden"><div class="modal-box"><div class="modal-body" id="rating-modal-body"></div></div></div>
-  <div id="survey-modal" class="modal-overlay hidden"><div class="modal-box" style="max-width: 580px;"><div class="modal-body"></div></div></div>
+  <!-- ================================================================== -->
+  <!-- RATING MODAL                                                        -->
+  <!-- ================================================================== -->
+  <div id="rating-modal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <div class="modal-body" id="rating-modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- SURVEY MODAL                                                        -->
+  <!-- ================================================================== -->
+  <div id="survey-modal" class="modal-overlay hidden">
+    <div class="modal-box" style="max-width: 580px;">
+      <div class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- ANALYTICS PANEL (Slide-in)                                          -->
+  <!-- ================================================================== -->
   <div id="analytics-panel" class="analytics-panel hidden"></div>
+
+  <!-- ================================================================== -->
+  <!-- TOAST CONTAINER                                                     -->
+  <!-- ================================================================== -->
   <div id="toast-container" class="toast-container"></div>
-  <!-- OVERLAY UNTUK SIDEBAR MOBILE -->
-  <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
 
-  <!-- MODAL PILIH MODEL -->
-  <div id="model-modal" class="modal-overlay hidden">
-    <div class="modal-box" style="max-width: 400px;">
-      <div class="modal-body">
-        <h3 class="modal-title" data-en="AI Model Settings" data-id="Pengaturan Model AI">Pengaturan Model AI</h3>
-        <p class="modal-subtitle" data-en="Select your primary AI engine." data-id="Pilih mesin AI utama Anda.">Select your primary AI engine.</p>
-        
-        <div style="display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px;">
-          <div>
-            <label style="font-size: 12px; color: var(--text-muted); font-weight: bold;">Provider</label>
-            <select id="select-provider" class="login-form-group" style="width: 100%; padding: 8px; background: var(--bg-input); color: #fff; border: 1px solid var(--border); border-radius: 4px;" onchange="updateModelDropdowns()">
-              <option value="openrouter">OpenRouter (Free & Multi-Model)</option>
-              <option value="gemini">Google Gemini</option>
-              <option value="openai">OpenAI (GPT)</option>
-            </select>
-          </div>
-          <div>
-            <label style="font-size: 12px; color: var(--text-muted); font-weight: bold;" data-en="Specific Model" data-id="Spesifik Model">Spesifik Model</label>
-            <select id="select-model" class="login-form-group" style="width: 100%; padding: 8px; background: var(--bg-input); color: #fff; border: 1px solid var(--border); border-radius: 4px;">
-              <!-- Akan diisi oleh JS -->
-            </select>
-          </div>
-        </div>
-
-        <div class="modal-actions">
-          <button class="btn btn-ghost" onclick="document.getElementById('model-modal').classList.add('hidden')" data-en="Cancel" data-id="Batal">Batal</button>
-          <button class="btn btn-primary" onclick="saveModelSettings()" data-en="Save Changes" data-id="Simpan">Simpan</button>
-        </div>
-      </div>
-    </div>
-  </div>
-  <!-- TOMBOL SLIDE BATTLE MODE (Floating Kanan) -->
-  <button id="btn-slide-battle" class="floating-battle-btn" onclick="toggleBattleDrawer()">
-    ◀ ⚔️ Multi-Agent
-  </button>
-
-  <!-- DRAWER BATTLE MODE -->
-  <div id="battle-drawer" class="battle-drawer">
-    <div class="drawer-header">
-      <h3 style="margin:0; font-size: 14px; color:var(--text-bright);">⚔️ Battle Mode</h3>
-      <button class="btn-ghost" style="border:none; color:var(--text-bright); cursor:pointer; font-size:16px;" onclick="toggleBattleDrawer()">▶</button>
-    </div>
-    <div class="drawer-body">
-      <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 15px;">Bandingkan respon Model Utama Anda dengan Model Pembanding (Qwen Coder) secara bersamaan.</p>
-      
-      <label class="modern-toggle">
-        <input type="checkbox" id="toggle-compare">
-        <span class="toggle-slider"></span>
-        <span class="toggle-label" style="font-size:13px; font-weight:bold; color:var(--text-primary);">Aktifkan Battle Mode</span>
-      </label>
-    </div>
-  </div>
-
-  <!-- OVERLAY UNTUK SIDEBAR MOBILE -->
-  <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
-
-  <!-- MODAL PILIH MODEL -->
-  <div id="model-modal" class="modal-overlay hidden">
-    <div class="modal-box" style="max-width: 400px;">
-      <div class="modal-body">
-        <h3 class="modal-title" data-en="AI Model Settings" data-id="Pengaturan Model AI">Pengaturan Model AI</h3>
-        <p class="modal-subtitle" data-en="Select your primary AI engine." data-id="Pilih mesin AI utama Anda.">Select your primary AI engine.</p>
-        
-        <div style="display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px;">
-          <div>
-            <label style="font-size: 12px; color: var(--text-muted); font-weight: bold;">Provider</label>
-            <select id="select-provider" class="login-form-group" style="width: 100%; padding: 8px; background: var(--bg-input); color: #fff; border: 1px solid var(--border); border-radius: 4px;" onchange="updateModelDropdowns()">
-              <option value="openrouter">OpenRouter (Free & Multi-Model)</option>
-              <option value="gemini">Google Gemini</option>
-              <option value="openai">OpenAI (GPT)</option>
-            </select>
-          </div>
-          <div>
-            <label style="font-size: 12px; color: var(--text-muted); font-weight: bold;" data-en="Specific Model" data-id="Spesifik Model">Spesifik Model</label>
-            <select id="select-model" class="login-form-group" style="width: 100%; padding: 8px; background: var(--bg-input); color: #fff; border: 1px solid var(--border); border-radius: 4px;">
-              <!-- Akan diisi oleh JS otomatis -->
-            </select>
-          </div>
-        </div>
-
-        <div class="modal-actions">
-          <button class="btn btn-ghost" onclick="document.getElementById('model-modal').classList.add('hidden')" data-en="Cancel" data-id="Batal">Batal</button>
-          <button class="btn btn-primary" onclick="saveModelSettings()" data-en="Save Changes" data-id="Simpan">Simpan</button>
-        </div>
-      </div>
-    </div>
-  </div>
-  <!-- Script Khusus Overlay Login (Berkomunikasi langsung dengan /api/login) -->
+  <!-- ================================================================== -->
+  <!-- LOGIN SCRIPT (Inline — harus load sebelum scriptV1.js)              -->
+  <!-- ================================================================== -->
   <script>
     document.getElementById("login-form").addEventListener("submit", async function(e) {
       e.preventDefault();
-      
+
       const btnSubmit = this.querySelector('button[type="submit"]');
+      const origText = btnSubmit.textContent;
       btnSubmit.disabled = true;
       btnSubmit.textContent = "Processing...";
       const errorMsg = document.getElementById("login-error-msg");
       errorMsg.style.display = "none";
 
       const payload = {
-        name: document.getElementById("login-name").value.trim(),
-        nim: document.getElementById("login-nim").value.trim(),
+        name:  document.getElementById("login-name").value.trim(),
+        nim:   document.getElementById("login-nim").value.trim(),
         kelas: document.getElementById("login-kelas").value.trim()
       };
 
@@ -404,66 +504,71 @@
           body: JSON.stringify(payload)
         });
         const data = await res.json();
-        
+
         if (res.ok && data.status === "ok") {
-          // Tutup layer login
           document.getElementById("login-overlay").classList.add("hidden");
-          
-          // Tampilkan Profil User di Header
+
           const userInfo = document.getElementById("user-info");
           const displayUserName = document.getElementById("display-user-name");
-          if(userInfo && displayUserName) {
-             userInfo.style.display = "flex";
-             displayUserName.textContent = "👋 " + data.name;
+          if (userInfo && displayUserName) {
+            userInfo.style.display = "flex";
+            displayUserName.textContent = "👋 " + data.name;
           }
-          
-          // Simpan nama di sessionStorage
+
           sessionStorage.setItem("sc_user_name", data.name);
           sessionStorage.setItem("sc_is_logged_in", "true");
-          if(data.role === "teacher") {
-             sessionStorage.setItem("sc_user_role", "teacher");
-             document.getElementById("btn-sidebar-analytics").style.display = "flex";
+
+          if (data.role === "teacher") {
+            sessionStorage.setItem("sc_user_role", "teacher");
+            const btnAnalytics = document.getElementById("btn-sidebar-analytics");
+            const btnMobileAnalytics = document.getElementById("btn-mobile-analytics");
+            if (btnAnalytics) btnAnalytics.style.display = "flex";
+            if (btnMobileAnalytics) btnMobileAnalytics.style.display = "flex";
           }
         } else {
           errorMsg.style.display = "block";
-          errorMsg.textContent = data.error || "Login gagal. Periksa kembali NIM dan Kelas Anda.";
+          errorMsg.textContent = data.error || "Login gagal. Periksa kembali data Anda.";
           btnSubmit.disabled = false;
-          btnSubmit.textContent = "Masuk";
+          btnSubmit.textContent = origText;
         }
       } catch (error) {
         errorMsg.style.display = "block";
         errorMsg.textContent = "Terjadi masalah jaringan server.";
         btnSubmit.disabled = false;
-        btnSubmit.textContent = "Masuk";
+        btnSubmit.textContent = origText;
       }
     });
 
-    // Cek status login jika halaman di-refresh
+    // Restore login state on page refresh
     window.addEventListener("DOMContentLoaded", () => {
-      if(sessionStorage.getItem("sc_is_logged_in") === "true") {
-         document.getElementById("login-overlay").classList.add("hidden");
-         document.getElementById("user-info").style.display = "flex";
-         document.getElementById("display-user-name").textContent = "👋 " + sessionStorage.getItem("sc_user_name");
-         
-         if(sessionStorage.getItem("sc_user_role") === "teacher") {
-             document.getElementById("btn-sidebar-analytics").style.display = "flex";
-         }
+      if (sessionStorage.getItem("sc_is_logged_in") === "true") {
+        document.getElementById("login-overlay").classList.add("hidden");
+        const userInfo = document.getElementById("user-info");
+        const displayName = document.getElementById("display-user-name");
+        if (userInfo) userInfo.style.display = "flex";
+        if (displayName) displayName.textContent = "👋 " + sessionStorage.getItem("sc_user_name");
+
+        if (sessionStorage.getItem("sc_user_role") === "teacher") {
+          const btnA = document.getElementById("btn-sidebar-analytics");
+          const btnMA = document.getElementById("btn-mobile-analytics");
+          if (btnA) btnA.style.display = "flex";
+          if (btnMA) btnMA.style.display = "flex";
+        }
       }
     });
 
-    // Fungsi Logout
     async function handleLogout() {
       try {
-         await fetch("/api/logout", { method: "POST" });
-         sessionStorage.clear();
-         window.location.reload(); // Reload halaman untuk memunculkan login form
+        await fetch("/api/logout", { method: "POST" });
+        sessionStorage.clear();
+        window.location.reload();
       } catch(e) {
-         console.error("Logout gagal", e);
+        console.error("Logout gagal", e);
       }
     }
   </script>
 
-  <!-- Panggil Skrip UI Utama -->
+  <!-- Main Application Script -->
   <script src="/static/scriptV1.js"></script>
 </body>
 </html>

@@ -1,35 +1,22 @@
 /**
- * scriptV1.js - StructCode Frontend Application
- * ==============================================
- * Client-side logic for the StructCode pedagogical AI assistant.
- * 
- * Update Fase 2: 
- * - Full Dynamic Bilingual Support via data-attributes
- * - Inline Keyword Highlighting parser (<kw>...</kw>)
- * - Enhanced Exploration Popup with Back & Ask Deeper buttons
+ * scriptV1.js - StructCode Frontend Application (Multi-Model + History)
+ * =====================================================================
+ * Updates:
+ * - Multi-Model parallel support (ask_multi)
+ * - Model Selector dropdown logic (max 3, toggle select/unselect)
+ * - Comparison Grid rendering (side-by-side cards)
+ * - Session History via localStorage (restore on refresh)
+ * - Background sync to MongoDB via /api/history
+ * - Mobile Bottom Nav & More Menu logic
+ * - Independent per-model loading (existing results preserved)
+ * - Execution time tracking & display
+ * - Per-model rating support
  */
 "use strict";
 
-//===========================================================================
+// ==========================================================================
 // CONSTANTS & CONFIGURATION
-//===========================================================================
-const AI_MODELS = {
-  openrouter: [
-    { id: "meta-llama/llama-3.3-70b-instruct:free", name: "Llama 3.3 (70B)", expert: "Ahli Algoritma Umum" },
-    { id: "qwen/qwen-3-coder-480b-a35b:free", name: "Qwen 3 Coder", expert: "Ahli Logika & Bug" },
-    { id: "google/gemma-3-27b-it:free", name: "Gemma 3 (27B)", expert: "Pakar Konsep Cepat" }
-  ],
-  gemini: [
-    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", expert: "Ahli Analisis Cepat" }
-  ],
-  openai: [
-    { id: "gpt-4o-mini", name: "GPT-4o Mini", expert: "Asisten Standar" }
-  ]
-};
-
-// Update AppState
-AppState.provider = localStorage.getItem("sc_provider") || "openrouter";
-AppState.model = localStorage.getItem("sc_model") || "meta-llama/llama-3.3-70b-instruct:free";
+// ==========================================================================
 
 const FEATURES = {
   GENERAL: "general",
@@ -39,35 +26,30 @@ const FEATURES = {
   HELP_WRITE: "help_write",
 };
 
-const FEATURE_META = {
-  [FEATURES.GENERAL]:    { icon: "❓" },
-  [FEATURES.FROM_CODE]:  { icon: "💻" },
-  [FEATURES.EXPLAIN]:    { icon: "📖" },
-  [FEATURES.HELP_FIX]:   { icon: "🔧" },
-  [FEATURES.HELP_WRITE]: { icon: "🛠" },
+const FEATURE_TITLES = {
+  [FEATURES.GENERAL]: { en: "General Question", id: "Pertanyaan Umum" },
+  [FEATURES.FROM_CODE]: { en: "Question from Pseudocode", id: "Dari Pseudocode" },
+  [FEATURES.EXPLAIN]: { en: "Explain Pseudocode", id: "Jelaskan Pseudocode" },
+  [FEATURES.HELP_FIX]: { en: "Help Fix Pseudocode", id: "Bantu Perbaiki Bug" },
+  [FEATURES.HELP_WRITE]: { en: "Help Write Pseudocode", id: "Bantu Tulis Algoritma" },
 };
 
 const RATING_LABELS = {
-  1: { label: "Very Unhelpful", emoji: "😡", color: "#f44336" },
-  2: { label: "Unhelpful",      emoji: "😞", color: "#ff9800" },
-  3: { label: "Neutral",        emoji: "😐", color: "#9e9e9e" },
-  4: { label: "Helpful",        emoji: "🙂", color: "#4caf50" },
-  5: { label: "Very Helpful",   emoji: "🤩", color: "#2196f3" },
+  1: { en: "Very Unhelpful", id: "Sangat Buruk", emoji: "😡", color: "#f44336" },
+  2: { en: "Unhelpful", id: "Buruk", emoji: "😞", color: "#ff9800" },
+  3: { en: "Neutral", id: "Netral", emoji: "😐", color: "#9e9e9e" },
+  4: { en: "Helpful", id: "Berguna", emoji: "🙂", color: "#4caf50" },
+  5: { en: "Very Helpful", id: "Sangat Berguna", emoji: "🤩", color: "#2196f3" },
 };
 
-const SURVEY_RESOURCES = [
-  { id: "structcode",        label: "StructCode" },
-  { id: "lecture_videos",    label: "Lecture Videos" },
-  { id: "lecture_notes",     label: "Lecture Notes" },
-  { id: "qa_board",          label: "Q&A Discussion Board" },
-  { id: "office_hours",      label: "Office Hours" },
-  { id: "chatgpt",           label: "ChatGPT" },
-  { id: "stackoverflow",     label: "Stack Overflow" },
-];
+const HISTORY_KEY = "sc_history_v1";
+const MAX_HISTORY_ENTRIES = 100;
+const MAX_MODELS = 3;
+const FEEDBACK_KEY = "sc_feedback_v1"; 
 
-//===========================================================================
+// ==========================================================================
 // APPLICATION STATE
-//===========================================================================
+// ==========================================================================
 
 const AppState = {
   currentFeature: FEATURES.GENERAL,
@@ -75,68 +57,110 @@ const AppState = {
   followUpIndex: 0,
   totalQueriesSession: 0,
   sessionStartTime: Date.now(),
+  language: "en",
+
+  // Multi-model
+  availableModels: [],
+  selectedModelIds: [],
+  defaultModelId: "",
+
+  // Current multi-model results cache per feature
+  // Structure: { feature: { input, extra, results: { modelId: {...} } } }
+  currentResults: {},
+
+  // Feedback yang sudah diberikan
+  // Structure: { feedbackKey: { rating, comment, timestamp } }
+  givenFeedback: {},
+
+  // Inline popup
   inlinePopupKeyword: null,
+
+  // Resizer
   resizerActive: false,
-  language: "en", // Status bahasa saat ini ("en" atau "id")
+
+  // Mobile
+  mobileMoreOpen: false,
+
+  // Last response info (for rating)
   lastResponse: {
     feature: null,
     querySnippet: "",
     responseSnippet: "",
     isFollowUp: false,
+    modelId: "",
   },
 };
 
-//===========================================================================
+// ==========================================================================
 // DOM ELEMENT CACHE
-//===========================================================================
+// ==========================================================================
 
 const DOM = {};
 
 function cacheDOMElements() {
   DOM.featureButtons = document.querySelectorAll(".feature-btn");
-  DOM.providerBadge  = document.getElementById("provider-badge");
-  DOM.featureTitle   = document.getElementById("feature-title");
-  
+  DOM.providerBadge = document.getElementById("provider-badge");
+  DOM.featureTitle = document.getElementById("feature-title");
+
   DOM.views = {};
   Object.values(FEATURES).forEach((feat) => {
     DOM.views[feat] = document.getElementById(`view-${feat}`);
   });
 
-  DOM.inputGeneral    = document.getElementById("input-general");
-  DOM.chatGeneral     = document.getElementById("chat-general");
-  DOM.btnAskGeneral   = document.getElementById("btn-ask-general");
+  // General
+  DOM.inputGeneral = document.getElementById("input-general");
+  DOM.chatGeneral = document.getElementById("chat-general");
+  DOM.btnAskGeneral = document.getElementById("btn-ask-general");
   DOM.btnClearGeneral = document.getElementById("btn-clear-general");
 
-  DOM.codeFromCode   = document.getElementById("code-from_code");
-  DOM.lnFromCode     = document.getElementById("ln-code-from_code");
-  DOM.qFromCode      = document.getElementById("q-from_code");
+  // From Code
+  DOM.codeFromCode = document.getElementById("code-from_code");
+  DOM.lnFromCode = document.getElementById("ln-code-from_code");
+  DOM.qFromCode = document.getElementById("q-from_code");
   DOM.outputFromCode = document.getElementById("output-from_code");
 
-  DOM.codeExplain   = document.getElementById("code-explain");
-  DOM.lnExplain     = document.getElementById("ln-code-explain");
+  // Explain
+  DOM.codeExplain = document.getElementById("code-explain");
+  DOM.lnExplain = document.getElementById("ln-code-explain");
   DOM.outputExplain = document.getElementById("output-explain");
 
-  DOM.codeHelpFix   = document.getElementById("code-help_fix");
-  DOM.lnHelpFix     = document.getElementById("ln-code-help_fix");
+  // Help Fix
+  DOM.codeHelpFix = document.getElementById("code-help_fix");
+  DOM.lnHelpFix = document.getElementById("ln-code-help_fix");
   DOM.intentHelpFix = document.getElementById("intent-help_fix");
   DOM.outputHelpFix = document.getElementById("output-help_fix");
 
-  DOM.inputHelpWrite  = document.getElementById("input-help_write");
+  // Help Write
+  DOM.inputHelpWrite = document.getElementById("input-help_write");
   DOM.outputHelpWrite = document.getElementById("output-help_write");
 
-  DOM.inlinePopup   = document.getElementById("inline-popup");
-  DOM.popupKeyword  = document.getElementById("popup-keyword");
-  DOM.popupBody     = document.getElementById("popup-body");
+  // Model Selector
+  DOM.modelSelectorToggle = document.getElementById("model-selector-toggle");
+  DOM.modelSelectorText = document.getElementById("model-selector-text");
+  DOM.modelSelectorArrow = document.getElementById("model-selector-arrow");
+  DOM.modelDropdown = document.getElementById("model-dropdown");
+  DOM.modelDropdownList = document.getElementById("model-dropdown-list");
+  DOM.modelCountBadge = document.getElementById("model-count-badge");
+  DOM.mobileModelList = document.getElementById("mobile-model-list");
 
-  DOM.ratingModal       = document.getElementById("rating-modal");
-  DOM.surveyModal       = document.getElementById("survey-modal");
-  DOM.disclaimerBanner  = document.getElementById("disclaimer-banner");
-  DOM.analyticsPanel    = document.getElementById("analytics-panel");
+  // Popups & Modals
+  DOM.inlinePopup = document.getElementById("inline-popup");
+  DOM.popupKeyword = document.getElementById("popup-keyword");
+  DOM.popupBody = document.getElementById("popup-body");
+  DOM.ratingModal = document.getElementById("rating-modal");
+  DOM.surveyModal = document.getElementById("survey-modal");
+  DOM.disclaimerBanner = document.getElementById("disclaimer-banner");
+  DOM.analyticsPanel = document.getElementById("analytics-panel");
+
+  // Mobile
+  DOM.mobileBottomNav = document.getElementById("mobile-bottom-nav");
+  DOM.mobileMoreMenu = document.getElementById("mobile-more-menu");
+  DOM.mobileHamburger = document.getElementById("mobile-hamburger");
 }
 
-//===========================================================================
+// ==========================================================================
 // INITIALIZATION
-//===========================================================================
+// ==========================================================================
 
 document.addEventListener("DOMContentLoaded", () => {
   cacheDOMElements();
@@ -148,87 +172,81 @@ document.addEventListener("DOMContentLoaded", () => {
   initGeneralInput();
   initInlinePopupDismiss();
   initKeyboardShortcuts();
-  initBurgerMenu();
-  updateProviderBadgeUI();
-  loadChatHistory(); // Panggil fungsi load history
-  // Terapkan terjemahan default saat pertama kali load
+  initMobileNav();
+  loadFeedbackFromStorage();   // ← TAMBAHKAN INI (sebelum restore history)
+  loadModelsFromAPI();
+  restoreHistoryFromStorage();
   applyTranslations();
   switchView(FEATURES.GENERAL);
   
+
   console.info(
     "[StructCode] App initialized | session started at",
     new Date(AppState.sessionStartTime).toISOString()
   );
 });
 
-//===========================================================================
-// BILINGUAL LOGIC (Terjemahan UI)
-//===========================================================================
+// ==========================================================================
+// BILINGUAL LOGIC
+// ==========================================================================
 
 function toggleLanguage() {
   AppState.language = AppState.language === "en" ? "id" : "en";
-  
   const btn = document.getElementById("btn-lang-toggle");
-  if (btn) {
-    btn.innerHTML = AppState.language === "en" ? "🌐 English" : "🌐 Indonesia";
-  }
-  
+  if (btn) btn.innerHTML = AppState.language === "en" ? "🌐 English" : "🌐 Indonesia";
   applyTranslations();
+  updateModelSelectorText();
   showToast(
-    AppState.language === "id" ? "Bahasa diubah ke Indonesia" : "Language set to English", 
+    AppState.language === "id" ? "Bahasa diubah ke Indonesia" : "Language set to English",
     "info"
   );
 }
 
 function applyTranslations() {
-  const lang = AppState.language; // 'en' atau 'id'
-  
-  // Update teks berdasarkan atribut data-en / data-id
+  const lang = AppState.language;
   document.querySelectorAll(`[data-${lang}]`).forEach((el) => {
-    // Abaikan jika elemen adalah textarea/input, karena mereka butuh placeholder khusus
     if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") {
-      // Kita gunakan innerHTML agar span icon di dalam menu tidak hilang
       el.innerHTML = el.getAttribute(`data-${lang}`);
     }
   });
-
-  // Update Placeholder textareas
   document.querySelectorAll(`[data-${lang}-placeholder]`).forEach((el) => {
     el.setAttribute("placeholder", el.getAttribute(`data-${lang}-placeholder`));
   });
-
-  // Pastikan judul aktif di-update
   if (DOM.featureTitle) {
-    const activeBtn = document.querySelector(".feature-btn.active .feature-label");
-    if (activeBtn) {
-      DOM.featureTitle.textContent = activeBtn.textContent;
-    }
+    const title = FEATURE_TITLES[AppState.currentFeature];
+    if (title) DOM.featureTitle.textContent = title[lang] || title.en;
   }
 }
 
-//===========================================================================
-// PROVIDER BADGE & TRANSPARENCY
-//===========================================================================
+function t(en, id) {
+  return AppState.language === "id" ? id : en;
+}
+
+// ==========================================================================
+// PROVIDER BADGE
+// ==========================================================================
 
 async function initProviderBadge() {
   try {
     const res = await fetch("/api/provider");
     const data = await res.json();
     if (DOM.providerBadge && data.provider) {
-      DOM.providerBadge.innerHTML = `<span class="provider-dot" aria-hidden="true"></span> ${data.provider} • ${data.model}`;
-      DOM.providerBadge.title = "This response is generated by an AI language model. It may contain errors.";
+      DOM.providerBadge.innerHTML = `<span class="provider-dot"></span> ${data.provider} • ${data.model}`;
+      DOM.providerBadge.title = t(
+        "AI-generated responses may contain errors.",
+        "Respons AI dapat mengandung error."
+      );
     }
   } catch {
     if (DOM.providerBadge) {
-      DOM.providerBadge.innerHTML = `<span class="provider-dot" aria-hidden="true"></span> StructCode AI`;
+      DOM.providerBadge.innerHTML = `<span class="provider-dot"></span> StructCode AI`;
     }
   }
 }
 
 function initDisclaimerBanner() {
   if (!DOM.disclaimerBanner) return;
-  const dismissed = sessionStorage.getItem("disclaimer-dismissed");
-  if (!dismissed) {
+  if (!sessionStorage.getItem("disclaimer-dismissed")) {
     DOM.disclaimerBanner.classList.remove("hidden");
   }
 }
@@ -240,9 +258,9 @@ function dismissDisclaimer() {
   }
 }
 
-//===========================================================================
+// ==========================================================================
 // FEATURE NAVIGATION
-//===========================================================================
+// ==========================================================================
 
 function initFeatureNavigation() {
   DOM.featureButtons.forEach((btn) => {
@@ -257,26 +275,176 @@ function initFeatureNavigation() {
 
 function switchView(feature) {
   AppState.currentFeature = feature;
-  
+
+  // Update sidebar buttons
   DOM.featureButtons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.feature === feature);
   });
-  
+
+  // Update mobile nav buttons
+  document.querySelectorAll(".mobile-nav-btn[data-feature]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.feature === feature);
+  });
+
+  // Update title
   if (DOM.featureTitle) {
-    const activeLabel = document.querySelector(`.feature-btn[data-feature="${feature}"] .feature-label`);
-    if(activeLabel) DOM.featureTitle.textContent = activeLabel.textContent;
+    const title = FEATURE_TITLES[feature];
+    if (title) DOM.featureTitle.textContent = title[AppState.language] || title.en;
   }
-  
+
+  // Show/hide views
   Object.entries(DOM.views).forEach(([feat, el]) => {
     if (el) el.classList.toggle("active", feat === feature);
   });
-  
+
   closeInlinePopup();
+  closeModelDropdown();
 }
 
-//===========================================================================
-// TEXTAREA LINE NUMBERS & UTILS
-//===========================================================================
+// ==========================================================================
+// MODEL SELECTOR
+// ==========================================================================
+
+async function loadModelsFromAPI() {
+  try {
+    const res = await fetch("/api/models");
+    const data = await res.json();
+
+    AppState.availableModels = data.models || [];
+    AppState.defaultModelId = data.default_model_id || "";
+
+    // Default: hanya model default yang terpilih
+    AppState.selectedModelIds = [AppState.defaultModelId];
+
+    renderModelDropdown(DOM.modelDropdownList);
+    renderModelDropdown(DOM.mobileModelList);
+    updateModelSelectorText();
+
+    console.info("[StructCode] Loaded models:", AppState.availableModels.length);
+  } catch (err) {
+    console.error("[StructCode] Failed to load models:", err);
+    if (DOM.modelDropdownList) {
+      DOM.modelDropdownList.innerHTML = `<div class="model-dropdown-loading" style="color:var(--error)">Failed to load models</div>`;
+    }
+  }
+}
+
+function renderModelDropdown(container) {
+  if (!container) return;
+
+  let html = "";
+  AppState.availableModels.forEach((model) => {
+    const isSelected = AppState.selectedModelIds.includes(model.id);
+    const isDefault = model.is_default;
+    const isDisabled = !isSelected && AppState.selectedModelIds.length >= MAX_MODELS;
+
+    html += `
+      <div class="model-item ${isSelected ? "selected" : ""} ${isDisabled ? "disabled" : ""}"
+           data-model-id="${model.id}"
+           onclick="toggleModelSelection('${model.id}')">
+        <div class="model-item-checkbox">${isSelected ? "✓" : ""}</div>
+        <div class="model-item-info">
+          <div class="model-item-header">
+            <span class="model-item-icon">${model.icon}</span>
+            <span class="model-item-label">${model.label}</span>
+            ${isDefault ? `<span class="model-item-default-badge">Default</span>` : ""}
+          </div>
+          <div class="model-item-persona">${model.persona}</div>
+          <div class="model-item-tags">
+            ${model.expertise_tags.map((tag) => `<span class="model-tag">${tag}</span>`).join("")}
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+function toggleModelSelection(modelId) {
+  const idx = AppState.selectedModelIds.indexOf(modelId);
+
+  if (idx > -1) {
+    // Deselect — tapi jangan biarkan 0 model terpilih
+    if (AppState.selectedModelIds.length <= 1) {
+      showToast(
+        t("At least 1 model must be selected.", "Minimal 1 model harus dipilih."),
+        "warning"
+      );
+      return;
+    }
+    AppState.selectedModelIds.splice(idx, 1);
+  } else {
+    // Select — cek max
+    if (AppState.selectedModelIds.length >= MAX_MODELS) {
+      showToast(
+        t(`Maximum ${MAX_MODELS} models can be selected.`, `Maksimal ${MAX_MODELS} model yang bisa dipilih.`),
+        "warning"
+      );
+      return;
+    }
+    AppState.selectedModelIds.push(modelId);
+  }
+
+  // Re-render both dropdowns
+  renderModelDropdown(DOM.modelDropdownList);
+  renderModelDropdown(DOM.mobileModelList);
+  updateModelSelectorText();
+
+  // Persist selection
+  sessionStorage.setItem("sc_selected_models", JSON.stringify(AppState.selectedModelIds));
+}
+
+function updateModelSelectorText() {
+  const count = AppState.selectedModelIds.length;
+  const text = t(`${count} model${count > 1 ? "s" : ""} selected`, `${count} model dipilih`);
+
+  if (DOM.modelSelectorText) DOM.modelSelectorText.textContent = text;
+  if (DOM.modelCountBadge) DOM.modelCountBadge.textContent = `${count}/${MAX_MODELS}`;
+}
+
+function toggleModelDropdown() {
+  if (!DOM.modelDropdown || !DOM.modelSelectorToggle) return;
+  const isHidden = DOM.modelDropdown.classList.contains("hidden");
+  if (isHidden) {
+    DOM.modelDropdown.classList.remove("hidden");
+    DOM.modelSelectorToggle.classList.add("open");
+  } else {
+    closeModelDropdown();
+  }
+}
+
+function closeModelDropdown() {
+  if (DOM.modelDropdown) DOM.modelDropdown.classList.add("hidden");
+  if (DOM.modelSelectorToggle) DOM.modelSelectorToggle.classList.remove("open");
+}
+
+// ==========================================================================
+// MOBILE NAVIGATION
+// ==========================================================================
+
+function initMobileNav() {
+  // Restore model selection dari session
+  const saved = sessionStorage.getItem("sc_selected_models");
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        AppState.selectedModelIds = parsed;
+      }
+    } catch (e) { /* ignore */ }
+  }
+}
+
+function toggleMobileMoreMenu() {
+  if (!DOM.mobileMoreMenu) return;
+  AppState.mobileMoreOpen = !AppState.mobileMoreOpen;
+  DOM.mobileMoreMenu.classList.toggle("hidden", !AppState.mobileMoreOpen);
+}
+
+// ==========================================================================
+// TEXTAREA LINE NUMBERS
+// ==========================================================================
 
 function initLineNumbers() {
   const pairs = [
@@ -287,29 +455,20 @@ function initLineNumbers() {
 
   pairs.forEach(([textarea, lineNumEl]) => {
     if (!textarea || !lineNumEl) return;
-    
     const syncLines = () => {
-      const lineCount = Math.max(1, textarea.value.split("\n").length);
-      lineNumEl.innerHTML = Array.from(
-        { length: lineCount }, 
-        (_, i) => i + 1
-      ).join("<br>");
+      const count = Math.max(1, textarea.value.split("\n").length);
+      lineNumEl.innerHTML = Array.from({ length: count }, (_, i) => i + 1).join("<br>");
       lineNumEl.scrollTop = textarea.scrollTop;
     };
-
     textarea.addEventListener("input", syncLines);
-    textarea.addEventListener("scroll", () => {
-      lineNumEl.scrollTop = textarea.scrollTop;
-    });
-
+    textarea.addEventListener("scroll", () => { lineNumEl.scrollTop = textarea.scrollTop; });
     textarea.addEventListener("keydown", (e) => {
       if (e.key === "Tab") {
         e.preventDefault();
-        insertTextAtCursor(textarea, "    "); 
+        insertTextAtCursor(textarea, "    ");
         syncLines();
       }
     });
-
     syncLines();
   });
 }
@@ -322,35 +481,31 @@ function insertTextAtCursor(textarea, text) {
   textarea.dispatchEvent(new Event("input"));
 }
 
-//===========================================================================
+// ==========================================================================
 // SPLIT PANEL RESIZER
-//===========================================================================
+// ==========================================================================
 
 function initResizers() {
   document.querySelectorAll(".resizer").forEach((resizer) => {
-    let startX = 0;
-    let startWidth = 0;
+    let startX = 0, startWidth = 0;
     const panel = resizer.previousElementSibling;
     const container = resizer.parentElement;
 
-    const onMouseMove = (e) => {
+    const onMove = (e) => {
       if (!AppState.resizerActive) return;
       const dx = e.clientX - startX;
       const newW = startWidth + dx;
-      const minW = 240;
-      const maxW = container.clientWidth - 300;
-      if (newW >= minW && newW <= maxW) {
-        panel.style.flex = `0 0 ${newW}px`;
-      }
+      const minW = 240, maxW = container.clientWidth - 300;
+      if (newW >= minW && newW <= maxW) panel.style.flex = `0 0 ${newW}px`;
     };
 
-    const onMouseUp = () => {
+    const onUp = () => {
       AppState.resizerActive = false;
       resizer.classList.remove("dragging");
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
     };
 
     resizer.addEventListener("mousedown", (e) => {
@@ -360,8 +515,8 @@ function initResizers() {
       resizer.classList.add("dragging");
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     });
   });
 }
@@ -382,54 +537,44 @@ function initKeyboardShortcuts() {
       closeInlinePopup();
       closeRatingModal();
       closeSurveyModal();
+      closeModelDropdown();
+      if (AppState.mobileMoreOpen) toggleMobileMoreMenu();
     }
   });
 }
 
-//===========================================================================
-// UI FEEDBACK / LOADING HELPERS
-//===========================================================================
+// ==========================================================================
+// UI FEEDBACK HELPERS
+// ==========================================================================
 
-function showTypingIndicator(viewId) {
-  const chatBox = document.getElementById(`chat-${viewId}`);
-  if (!chatBox) return null;
-  const emptyState = chatBox.querySelector(".empty-state");
+function showTypingIndicator(container) {
+  if (!container) return null;
+  const emptyState = container.querySelector(".empty-state");
   if (emptyState) emptyState.remove();
 
   const indicator = document.createElement("div");
   indicator.className = "message bot typing";
-  indicator.id = `typing-${viewId}`;
-  
-  const text = AppState.language === "id" ? "StructCode sedang berpikir..." : "StructCode is thinking...";
-  
+  indicator.id = `typing-${Date.now()}`;
   indicator.innerHTML = `
     <div class="typing-dots"><span></span><span></span><span></span></div>
-    <span class="typing-label">${text}</span>
+    <span>${t("StructCode is thinking...", "StructCode sedang berpikir...")}</span>
   `;
-  chatBox.appendChild(indicator);
-  chatBox.scrollTop = chatBox.scrollHeight;
+  container.appendChild(indicator);
+  container.scrollTop = container.scrollHeight;
   return indicator;
-}
-
-function hideTypingIndicator(viewId) {
-  const el = document.getElementById(`typing-${viewId}`);
-  if (el) el.remove();
 }
 
 function showPanelLoading(outputId) {
   const out = document.getElementById(outputId);
   if (!out) return;
-  
-  const title = AppState.language === "id" ? "Sedang menghasilkan respons..." : "Generating response...";
-  const note = AppState.language === "id" 
-      ? "StructCode menghindari memberikan solusi instan demi mendukung pembelajaran Anda" 
-      : "StructCode avoids giving direct solutions to support your learning";
-      
   out.innerHTML = `
     <div class="panel-loading">
       <div class="typing-dots"><span></span><span></span><span></span></div>
-      <span>${title}</span>
-      <p class="loading-note">${note}</p>
+      <span>${t("Generating responses...", "Sedang menghasilkan respons...")}</span>
+      <p style="font-size:0.78rem;color:var(--text-muted);">${t(
+        "StructCode avoids giving direct solutions to support your learning.",
+        "StructCode menghindari memberikan solusi instan demi mendukung pembelajaran Anda."
+      )}</p>
     </div>
   `;
 }
@@ -437,11 +582,7 @@ function showPanelLoading(outputId) {
 function showPanelError(outputId, errorText) {
   const out = document.getElementById(outputId);
   if (!out) return;
-  out.innerHTML = `
-    <div class="error-message panel-error">
-      ⚠ ${escapeHtml(errorText)}
-    </div>
-  `;
+  out.innerHTML = `<div class="error-message">⚠ ${escapeHtml(errorText)}</div>`;
 }
 
 function showToast(message, type = "info", duration = 3000) {
@@ -456,7 +597,6 @@ function showToast(message, type = "info", duration = 3000) {
   toast.className = `toast toast-${type}`;
   toast.textContent = message;
   container.appendChild(toast);
-  
   requestAnimationFrame(() => toast.classList.add("toast-visible"));
   setTimeout(() => {
     toast.classList.remove("toast-visible");
@@ -464,482 +604,377 @@ function showToast(message, type = "info", duration = 3000) {
   }, duration);
 }
 
-//===========================================================================
+function shakeElement(el) {
+  if (!el) return;
+  el.classList.remove("shake");
+  void el.offsetWidth;
+  el.classList.add("shake");
+  setTimeout(() => el.classList.remove("shake"), 500);
+}
+
+// ==========================================================================
+// CORE: MULTI-MODEL ASK
+// ==========================================================================
+
+async function askMultiModel(feature, input, extra = "", isFollowUp = false) {
+  const modelIds = [...AppState.selectedModelIds];
+  const existingResults = AppState.currentResults[feature] || {};
+  const existingForSameInput = existingResults.input === input && existingResults.extra === extra
+    ? existingResults.results || {}
+    : {};
+
+  // Model yang sudah punya hasil (tidak perlu reload)
+  const existingModelIds = Object.keys(existingForSameInput);
+
+  // Jika semua model sudah ada hasilnya, skip
+  const newModels = modelIds.filter((m) => !existingModelIds.includes(m));
+  if (newModels.length === 0 && existingModelIds.length > 0) {
+    showToast(t("All selected models already have results.", "Semua model sudah memiliki hasil."), "info");
+    return existingForSameInput;
+  }
+
+  try {
+    const res = await fetch("/api/ask_multi", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        feature,
+        input,
+        extra,
+        language: AppState.language,
+        model_ids: modelIds,
+        existing_model_ids: existingModelIds,
+        is_follow_up: isFollowUp,
+        follow_up_index: AppState.followUpIndex,
+      }),
+    });
+
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    // Merge hasil baru dengan yang existing
+    const mergedResults = { ...existingForSameInput, ...data.results };
+
+    // Simpan ke current results cache
+    AppState.currentResults[feature] = {
+      input,
+      extra,
+      results: mergedResults,
+      historyId: data.history_id,
+      timestamp: new Date().toISOString(),
+    };
+
+    // Simpan ke localStorage
+    saveHistoryToStorage(feature, input, extra, mergedResults, data.history_id);
+
+    // Background sync ke MongoDB
+    syncHistoryToServer(feature, input, extra, mergedResults, data.history_id);
+
+    return mergedResults;
+  } catch (err) {
+    throw err;
+  }
+}
+
+// ==========================================================================
 // FEATURE: GENERAL QUESTION (Chat)
-//===========================================================================
+// ==========================================================================
 
 async function submitGeneral() {
   if (AppState.isLoading || !DOM.inputGeneral) return;
   const input = DOM.inputGeneral.value.trim();
-  if (!input) return;
+  if (!input) { shakeElement(DOM.inputGeneral); return; }
 
-  const isBattle = document.getElementById("toggle-compare")?.checked;
   addChatMessage(FEATURES.GENERAL, "user", escapeHtml(input));
   DOM.inputGeneral.value = "";
-  AppState.isLoading = true; showTypingIndicator(FEATURES.GENERAL);
 
-  // Helper function untuk memanggil API
-  const fetchAI = async (prov, modId, fallbackExpert) => {
-    try {
-      const res = await fetch("/api/ask", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ feature: FEATURES.GENERAL, input: input, language: AppState.language, provider: prov, model: modId })
-      });
-      const data = await res.json();
-      // Cari nama expert
-      let mName = modId, mExpert = fallbackExpert;
-      if(AI_MODELS[prov]) {
-        const f = AI_MODELS[prov].find(x => x.id === modId);
-        if(f) { mName = f.name; mExpert = f.expert; }
-      }
-      return { ...data, mName, mExpert };
-    } catch(e) { return { error: e.message, mName: modId, mExpert: "Error" }; }
-  };
-
-  try {
-    if (isBattle) {
-      // BATTLE MODE (Paralel)
-      const res1 = fetchAI(AppState.provider, AppState.model, "Model Utama");
-      // Model Pembanding otomatis (Qwen Coder)
-      const res2 = fetchAI("openrouter", "qwen/qwen-3-coder-480b-a35b:free", "Model Pembanding");
-      
-      const [data1, data2] = await Promise.all([res1, res2]);
-      hideTypingIndicator(FEATURES.GENERAL);
-      renderBattleUI(data1, data2);
-    } else {
-      // SINGLE MODE
-      const data1 = await fetchAI(AppState.provider, AppState.model, "Model Utama");
-      hideTypingIndicator(FEATURES.GENERAL);
-      
-      if(data1.error) addErrorMessage(FEATURES.GENERAL, data1.error);
-      else {
-        const ans = extractSection(data1.response, "ANSWER", ["FOLLOWUP1"]) || data1.response;
-        const html = `
-          <div style="font-size:11px; color:var(--text-dim); margin-bottom:6px;">
-             🧠 <strong>${data1.mName}</strong> | ⏱ ${data1.time}s
-          </div>
-          ${formatText(ans)}
-        `;
-        addChatMessage(FEATURES.GENERAL, "bot", html);
-      }
-    }
-  } catch (err) { hideTypingIndicator(FEATURES.GENERAL); addErrorMessage(FEATURES.GENERAL, err.message); }
-  AppState.isLoading = false;
-}
-
-function renderBattleUI(d1, d2) {
-  const chatBox = document.getElementById(`chat-${FEATURES.GENERAL}`);
-  const battleId = Date.now();
-  
-  const buildCol = (d, suffix) => {
-    const ans = d.error ? `⚠ ${d.error}` : (extractSection(d.response, "ANSWER", ["FOLLOWUP1"]) || d.response);
-    return `
-      <div class="battle-col">
-        <div class="battle-header">
-          <div class="battle-meta"><strong>${d.mName}</strong><span>⏱ ${d.time || 0}s | 🧠 ${d.mExpert}</span></div>
-          <button class="btn-toggle-hide" onclick="toggleHideModel(this, 'bbody-${battleId}-${suffix}')">➖ Sembunyikan</button>
-        </div>
-        <div id="bbody-${battleId}-${suffix}" class="battle-body">${formatText(ans)}</div>
-      </div>
-    `;
-  };
-
-  const html = `<div class="battle-container">${buildCol(d1, 'left')}${buildCol(d2, 'right')}</div>`;
-  const el = document.createElement("div");
-  el.style.width = "100%"; el.innerHTML = html;
-  chatBox.appendChild(el);
-  chatBox.scrollTop = chatBox.scrollHeight;
-}
-
-// HISTORY (Anti-hilang saat Refresh)
-async function loadChatHistory() {
-  const res = await fetch("/api/history");
-  const data = await res.json();
-  if(data.history && data.history.length > 0) {
-    const chatBox = document.getElementById(`chat-${FEATURES.GENERAL}`);
-    chatBox.innerHTML = ""; // Bersihkan tulisan "welcome"
-    data.history.forEach(log => {
-       if(log.rq1_query?.input) addChatMessage(FEATURES.GENERAL, "user", escapeHtml(log.rq1_query.input));
-       if(log.rq2_response?.response) {
-         const ans = extractSection(log.rq2_response.response, "ANSWER", ["FOLLOWUP1"]) || log.rq2_response.response;
-         addChatMessage(FEATURES.GENERAL, "bot", `
-          <div style="font-size:11px; color:var(--text-dim); margin-bottom:6px;">
-             🧠 <strong>${log.model_used || 'AI Model'}</strong> | ⏱ ${log.execution_time_sec || 0}s
-          </div>
-          ${formatText(ans)}
-         `);
-       }
-    });
-  }
-}
-
-async function submitFollowUp(text) {
-  if (AppState.isLoading || !DOM.inputGeneral) return;
-  
-  AppState.followUpIndex++;
-  addChatMessage(FEATURES.GENERAL, "user", escapeHtml(text));
   AppState.isLoading = true;
   AppState.totalQueriesSession++;
-  showTypingIndicator(FEATURES.GENERAL);
+  const typingEl = showTypingIndicator(DOM.chatGeneral);
 
   try {
-    const res = await fetch("/api/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        feature: FEATURES.GENERAL,
-        input: text,
-        language: AppState.language,
-        is_follow_up: true,
-        follow_up_index: AppState.followUpIndex,
-      }),
-    });
-    
-    const data = await res.json();
-    hideTypingIndicator(FEATURES.GENERAL);
-
-    if (data.error) {
-      addErrorMessage(FEATURES.GENERAL, data.error);
-    } else {
-      AppState.lastResponse = {
-        feature: FEATURES.GENERAL,
-        querySnippet: text.substring(0, 200),
-        responseSnippet: data.response.substring(0, 300),
-        isFollowUp: true,
-      };
-      renderGeneralResponse(data.response);
-    }
+    const results = await askMultiModel(FEATURES.GENERAL, input, "", false);
+    if (typingEl) typingEl.remove();
+    renderGeneralMultiResponse(results, input);
   } catch (err) {
-    hideTypingIndicator(FEATURES.GENERAL);
-    addErrorMessage(FEATURES.GENERAL, `Network error: ${err.message}`);
+    if (typingEl) typingEl.remove();
+    addErrorMessage(FEATURES.GENERAL, err.message || "Network error");
   } finally {
     AppState.isLoading = false;
   }
 }
 
-function renderGeneralResponse(text) {
+async function submitFollowUp(text) {
+  if (AppState.isLoading || !DOM.inputGeneral) return;
+
+  const cleanText = text.replace(/<[^>]+>/g, "");
+  AppState.followUpIndex++;
+
+  addChatMessage(FEATURES.GENERAL, "user", escapeHtml(cleanText));
+  AppState.isLoading = true;
+  AppState.totalQueriesSession++;
+
+  // Reset current results for new query
+  delete AppState.currentResults[FEATURES.GENERAL];
+
+  const typingEl = showTypingIndicator(DOM.chatGeneral);
+
+  try {
+    const results = await askMultiModel(FEATURES.GENERAL, cleanText, "", true);
+    if (typingEl) typingEl.remove();
+    renderGeneralMultiResponse(results, cleanText);
+  } catch (err) {
+    if (typingEl) typingEl.remove();
+    addErrorMessage(FEATURES.GENERAL, err.message || "Network error");
+  } finally {
+    AppState.isLoading = false;
+  }
+}
+
+function renderGeneralMultiResponse(results, queryText) {
+  const modelIds = Object.keys(results);
+  const isSingle = modelIds.length === 1;
+
+  if (isSingle) {
+    // Single model → render seperti biasa (inline chat bubble)
+    const modelId = modelIds[0];
+    const r = results[modelId];
+    if (r.is_error) {
+      addErrorMessage(FEATURES.GENERAL, `[${r.label}] ${r.error}`);
+      return;
+    }
+    renderSingleGeneralResponse(r, modelId, queryText);
+    return;
+  }
+
+  // Multi-model → comparison grid
+  const gridClass = modelIds.length === 2 ? "two-models" : "three-models";
+  const gridEl = document.createElement("div");
+  gridEl.className = `comparison-grid ${gridClass}`;
+
+  modelIds.forEach((modelId) => {
+    const r = results[modelId];
+    const card = createModelResponseCard(r, modelId, FEATURES.GENERAL, queryText);
+    gridEl.appendChild(card);
+  });
+
+  const chatBox = DOM.chatGeneral;
+  if (!chatBox) return;
+  const emptyState = chatBox.querySelector(".empty-state");
+  if (emptyState) emptyState.remove();
+  chatBox.appendChild(gridEl);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function renderSingleGeneralResponse(result, modelId, queryText) {
+  const text = result.response || "";
   const answer = extractSection(text, "ANSWER", ["FOLLOWUP1", "FOLLOWUP2"]);
   const fu1 = extractLine(text, "FOLLOWUP1");
   const fu2 = extractLine(text, "FOLLOWUP2");
-  
-  let html = `<div class="response-answer">${formatText(answer || text)}</div>`;
+
+  let html = "";
+
+  // Model badge
+  const info = getModelInfo(modelId);
+  html += `<div class="model-card-header" style="margin:-14px -18px 12px;padding:8px 14px;border-radius:4px 4px 0 0;">
+    <span class="model-card-icon">${info.icon}</span>
+    <div class="model-card-info">
+      <div class="model-card-label">${info.label}</div>
+      <div class="model-card-persona">${info.persona}</div>
+    </div>
+    <span class="exec-time-badge">⏱ ${result.exec_time}s</span>
+  </div>`;
+
+  html += `<div class="response-answer">${formatText(answer || text)}</div>`;
 
   if (fu1 || fu2) {
-    const label = AppState.language === "id" ? "Saran Pertanyaan Lanjutan" : "Suggested Follow-Up Questions";
     html += `
       <div class="followup-box">
-        <small class="followup-label">${label}</small>
+        <small class="followup-label">${t("Suggested Follow-Up Questions", "Saran Pertanyaan Lanjutan")}</small>
         <div class="followup-chips">
-          ${fu1 ? `<button class="followup-chip" onclick="fillAndSubmitFollowUp(${JSON.stringify(cleanChipText(fu1))})">${escapeHtml(cleanChipText(fu1))}</button>` : ""}
-          ${fu2 ? `<button class="followup-chip" onclick="fillAndSubmitFollowUp(${JSON.stringify(cleanChipText(fu2))})">${escapeHtml(cleanChipText(fu2))}</button>` : ""}
+          ${fu1 ? `<button class="followup-chip" onclick="submitFollowUp(${JSON.stringify(cleanChipText(fu1))})">${escapeHtml(cleanChipText(fu1))}</button>` : ""}
+          ${fu2 ? `<button class="followup-chip" onclick="submitFollowUp(${JSON.stringify(cleanChipText(fu2))})">${escapeHtml(cleanChipText(fu2))}</button>` : ""}
         </div>
       </div>
     `;
   }
 
   const msgEl = addChatMessage(FEATURES.GENERAL, "bot", html);
-  
   if (msgEl) {
-    const ratingBar = createInlineRatingBar(AppState.lastResponse.feature, AppState.lastResponse.querySnippet, AppState.lastResponse.responseSnippet);
-    ratingBar.style.marginTop = "12px";
-    ratingBar.style.paddingTop = "12px";
+    const ratingBar = createInlineRatingBar(FEATURES.GENERAL, queryText, text.substring(0, 300), modelId);
     msgEl.appendChild(ratingBar);
   }
 }
 
-function fillAndSubmitFollowUp(text) {
-  // Bersihkan tag html dari teks jika ada sisa <kw> saat di klik
-  const cleanText = text.replace(/<[^>]+>/g, '');
-  if (DOM.inputGeneral) DOM.inputGeneral.value = cleanText;
-  submitFollowUp(cleanText);
+// ==========================================================================
+// MODEL RESPONSE CARD (Reusable for all features)
+// ==========================================================================
+
+function createModelResponseCard(result, modelId, feature, queryText) {
+  const card = document.createElement("div");
+  const info = getModelInfo(modelId);
+  const isError = result.is_error || result.error;
+  card.className = `model-response-card ${isError ? "error" : ""}`;
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "model-card-header";
+  header.innerHTML = `
+    <span class="model-card-icon">${info.icon}</span>
+    <div class="model-card-info">
+      <div class="model-card-label">${info.label}</div>
+      <div class="model-card-persona">${info.persona}</div>
+    </div>
+    <span class="exec-time-badge">⏱ ${result.exec_time || 0}s</span>
+  `;
+  card.appendChild(header);
+
+  // Body
+  const body = document.createElement("div");
+  body.className = "model-card-body";
+
+  if (isError) {
+    body.innerHTML = `<div class="error-message">⚠ ${escapeHtml(result.error || "Unknown error")}</div>`;
+  } else {
+    body.innerHTML = renderFeatureContent(feature, result.response || "", queryText);
+  }
+  card.appendChild(body);
+
+  // Footer (rating)
+  if (!isError) {
+    const footer = document.createElement("div");
+    footer.className = "model-card-footer";
+    const ratingBar = createInlineRatingBar(
+      feature,
+      queryText.substring(0, 200),
+      (result.response || "").substring(0, 300),
+      modelId
+    );
+    ratingBar.style.border = "none";
+    ratingBar.style.margin = "0";
+    ratingBar.style.padding = "0";
+    footer.appendChild(ratingBar);
+    card.appendChild(footer);
+  }
+
+  return card;
 }
 
-//===========================================================================
-// FEATURE: QUESTION FROM CODE (Split Panel)
-//===========================================================================
+function createModelLoadingCard(modelId) {
+  const info = getModelInfo(modelId);
+  const card = document.createElement("div");
+  card.className = "model-response-card loading";
+  card.dataset.modelId = modelId;
+  card.innerHTML = `
+    <div class="model-card-header">
+      <span class="model-card-icon">${info.icon}</span>
+      <div class="model-card-info">
+        <div class="model-card-label">${info.label}</div>
+        <div class="model-card-persona">${info.persona}</div>
+      </div>
+      <span class="exec-time-badge">⏱ ...</span>
+    </div>
+    <div class="model-card-loading">
+      <div class="typing-dots"><span></span><span></span><span></span></div>
+      <span>${t("Generating...", "Memproses...")}</span>
+    </div>
+  `;
+  return card;
+}
 
-async function submitFromCode() {
-  if (AppState.isLoading) return;
+// ==========================================================================
+// FEATURE CONTENT RENDERER (Per feature formatting)
+// ==========================================================================
 
-  const code = DOM.codeFromCode?.value?.trim() || "";
-  const question = DOM.qFromCode?.value?.trim() || "";
-  const warn1 = AppState.language === "id" ? "Tolong tempel pseudocode Anda terlebih dahulu." : "Please paste your pseudocode first.";
-  const warn2 = AppState.language === "id" ? "Tolong masukkan pertanyaan Anda." : "Please enter your question.";
-
-  if (!code) {
-    shakeElement(DOM.codeFromCode);
-    showToast(warn1, "warning");
-    return;
-  }
-  if (!question) {
-    shakeElement(DOM.qFromCode);
-    showToast(warn2, "warning");
-    return;
-  }
-
-  showPanelLoading("output-from_code");
-  AppState.isLoading = true;
-  AppState.totalQueriesSession++;
-
-  try {
-    const res = await fetch("/api/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        feature: FEATURES.FROM_CODE,
-        input: question,
-        extra: code,
-        language: AppState.language
-      }),
-    });
-    const data = await res.json();
-    
-    if (data.error) {
-      showPanelError("output-from_code", data.error);
-    } else {
-      AppState.lastResponse = {
-        feature: FEATURES.FROM_CODE,
-        querySnippet: question.substring(0, 200),
-        responseSnippet: data.response.substring(0, 300),
-        isFollowUp: false,
-      };
-      renderFromCodeResponse(data.response, code, question);
-    }
-  } catch (err) {
-    showPanelError("output-from_code", `Network error: ${err.message}`);
-  } finally {
-    AppState.isLoading = false;
+function renderFeatureContent(feature, text, queryText) {
+  switch (feature) {
+    case FEATURES.GENERAL:
+      return renderGeneralContent(text);
+    case FEATURES.FROM_CODE:
+      return renderFromCodeContent(text);
+    case FEATURES.EXPLAIN:
+      return renderExplainContent(text, queryText);
+    case FEATURES.HELP_FIX:
+      return renderHelpFixContent(text, queryText);
+    case FEATURES.HELP_WRITE:
+      return renderHelpWriteContent(text, queryText);
+    default:
+      return formatText(text);
   }
 }
 
-function renderFromCodeResponse(text, originalCode, originalQuestion) {
-  const out = document.getElementById("output-from_code");
-  if (!out) return;
+function renderGeneralContent(text) {
+  const answer = extractSection(text, "ANSWER", ["FOLLOWUP1", "FOLLOWUP2"]);
+  const fu1 = extractLine(text, "FOLLOWUP1");
+  const fu2 = extractLine(text, "FOLLOWUP2");
 
+  let html = `<div class="response-answer">${formatText(answer || text)}</div>`;
+  if (fu1 || fu2) {
+    html += `<div class="followup-box">
+      <small class="followup-label">${t("Follow-up", "Lanjutan")}</small>
+      <div class="followup-chips">
+        ${fu1 ? `<button class="followup-chip" onclick="submitFollowUp(${JSON.stringify(cleanChipText(fu1))})">${escapeHtml(cleanChipText(fu1))}</button>` : ""}
+        ${fu2 ? `<button class="followup-chip" onclick="submitFollowUp(${JSON.stringify(cleanChipText(fu2))})">${escapeHtml(cleanChipText(fu2))}</button>` : ""}
+      </div>
+    </div>`;
+  }
+  return html;
+}
+
+function renderFromCodeContent(text) {
   const response = extractSection(text, "RESPONSE", ["FOLLOWUP"]);
   const followup = extractLine(text, "FOLLOWUP");
-  
-  const title = AppState.language === "id" ? "Pertanyaan dari Pseudocode" : "Question from Pseudocode";
-
-  let html = `
-    <div class="response-card">
-      <div class="response-header">
-        <span class="response-icon">💻</span>
-        <span class="response-feature-label">${title}</span>
-      </div>
-      <div class="response-body">${formatText(response || text)}</div>
-  `;
-
+  let html = `<div class="response-body">${formatText(response || text)}</div>`;
   if (followup) {
-    const fuLabel = AppState.language === "id" ? "Coba pertimbangkan juga" : "Consider also exploring";
-    html += `
-      <div class="followup-box">
-        <small class="followup-label">${fuLabel}</small>
-        <div class="followup-chips">
-          <button class="followup-chip" onclick="fillAndSubmitFollowUp(${JSON.stringify(cleanChipText(followup))})">${escapeHtml(cleanChipText(followup))}</button>
-        </div>
+    html += `<div class="followup-box">
+      <small class="followup-label">${t("Consider also", "Pertimbangkan juga")}</small>
+      <div class="followup-chips">
+        <button class="followup-chip" onclick="submitFollowUp(${JSON.stringify(cleanChipText(followup))})">${escapeHtml(cleanChipText(followup))}</button>
       </div>
-    `;
+    </div>`;
   }
-  
-  html += `</div>`;
-
-  const wrapper = document.createElement("div");
-  wrapper.innerHTML = html;
-  
-  const ratingBar = createInlineRatingBar(AppState.lastResponse.feature, AppState.lastResponse.querySnippet, AppState.lastResponse.responseSnippet);
-  wrapper.appendChild(ratingBar);
-  
-  out.innerHTML = "";
-  out.appendChild(wrapper);
+  return html;
 }
 
-//===========================================================================
-// FEATURE: EXPLAIN CODE (Split Panel)
-//===========================================================================
-
-async function submitExplain() {
-  if (AppState.isLoading) return;
-  const code = DOM.codeExplain?.value?.trim() || "";
-
-  if (!code) {
-    shakeElement(DOM.codeExplain);
-    const warn = AppState.language === "id" ? "Tolong tempel pseudocode untuk dijelaskan." : "Please paste pseudocode to explain.";
-    showToast(warn, "warning");
-    return;
-  }
-
-  showPanelLoading("output-explain");
-  AppState.isLoading = true;
-  AppState.totalQueriesSession++;
-
-  try {
-    const res = await fetch("/api/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        feature: FEATURES.EXPLAIN,
-        input: code,
-        extra: code,
-        language: AppState.language
-      }),
-    });
-    const data = await res.json();
-    
-    if (data.error) {
-      showPanelError("output-explain", data.error);
-    } else {
-      AppState.lastResponse = {
-        feature: FEATURES.EXPLAIN,
-        querySnippet: `[Explain] ${code.substring(0, 150)}`,
-        responseSnippet: data.response.substring(0, 300),
-        isFollowUp: false,
-      };
-      renderExplainResponse(data.response, code);
-    }
-  } catch (err) {
-    showPanelError("output-explain", `Network error: ${err.message}`);
-  } finally {
-    AppState.isLoading = false;
-  }
-}
-
-function renderExplainResponse(text, code) {
-  const out = document.getElementById("output-explain");
-  if (!out) return;
-
-  const lines = code.split("\n");
+function renderExplainContent(text, code) {
+  const lines = (code || "").split("\n");
   const explanations = {};
-  
   const lineRegex = /LINE\|\|\|(\d+)\|\|\|([\s\S]*?)(?=LINE\|\|\||SUMMARY\|\|\||$)/gi;
   let match;
   while ((match = lineRegex.exec(text)) !== null) {
     explanations[parseInt(match[1])] = match[2].trim();
   }
-
   const summaryMatch = text.match(/SUMMARY\|\|\|([\s\S]*?)(?=$)/i);
   const summary = summaryMatch ? summaryMatch[1].trim() : "";
+  const defExpl = t("No specific explanation.", "Tidak ada penjelasan khusus.");
+  const lineRef = t("Line", "Baris");
 
-  const headerMsg = AppState.language === "id" ? "Arahkan atau klik baris untuk melihat penjelasannya" : "Hover or click a line to see its explanation below";
-  const defExpl = AppState.language === "id" ? "Tidak ada penjelasan khusus untuk baris ini." : "No specific explanation for this line.";
-  const lineRefText = AppState.language === "id" ? "Baris" : "Line";
-
-  let html = `
-    <div class="explain-header">
-      <span class="explain-icon">📖</span>
-      <span>${headerMsg}</span>
-    </div>
-    <div class="line-explainer">
-  `;
-
+  let html = `<div class="line-explainer">`;
   lines.forEach((line, idx) => {
-    const lineNum = idx + 1;
-    const expl = explanations[lineNum] || defExpl;
-    const hasExpl = Boolean(explanations[lineNum]);
-
+    const num = idx + 1;
+    const expl = explanations[num] || defExpl;
+    const has = Boolean(explanations[num]);
     html += `
-      <div class="line-row ${hasExpl ? 'has-explanation' : ''}" tabindex="0">
-        <div class="line-num">${lineNum}</div>
+      <div class="line-row ${has ? "has-explanation" : ""}" tabindex="0">
+        <div class="line-num">${num}</div>
         <div class="line-code">${escapeHtml(line) || "&nbsp;"}</div>
-        <div class="line-tooltip" role="tooltip">
-          <span class="tooltip-line-ref">${lineRefText} ${lineNum}:</span>
-          ${formatText(expl)}
-        </div>
-      </div>
-    `;
+        <div class="line-tooltip"><span class="tooltip-line-ref">${lineRef} ${num}:</span>${formatText(expl)}</div>
+      </div>`;
   });
-
   html += `</div>`;
 
   if (summary) {
-    const sumTitle = AppState.language === "id" ? "Ringkasan Kode" : "Summary of the code";
-    html += `
-      <div class="summary-card">
-        <div class="summary-header">
-          <span class="summary-icon">📝</span>
-          <strong>${sumTitle}</strong>
-        </div>
-        <p class="summary-text">${formatText(summary)}</p>
-      </div>
-    `;
+    html += `<div class="summary-card"><div class="summary-header"><span>📝</span><strong>${t("Summary", "Ringkasan")}</strong></div><p class="summary-text">${formatText(summary)}</p></div>`;
   }
-
-  const wrapper = document.createElement("div");
-  wrapper.innerHTML = html;
-
-  const ratingBar = createInlineRatingBar(AppState.lastResponse.feature, AppState.lastResponse.querySnippet, AppState.lastResponse.responseSnippet);
-  wrapper.appendChild(ratingBar);
-
-  out.innerHTML = "";
-  out.appendChild(wrapper);
+  return html;
 }
 
-//===========================================================================
-// FEATURE: HELP FIX CODE (Split Panel)
-//===========================================================================
-
-async function submitHelpFix() {
-  if (AppState.isLoading) return;
-
-  const code = DOM.codeHelpFix?.value?.trim() || "";
-  const intent = DOM.intentHelpFix?.value?.trim() || "";
-
-  if (!code) {
-    shakeElement(DOM.codeHelpFix);
-    const warn = AppState.language === "id" ? "Tolong tempel pseudocode Anda terlebih dahulu." : "Please paste your pseudocode first.";
-    showToast(warn, "warning");
-    return;
-  }
-
-  showPanelLoading("output-help_fix");
-  AppState.isLoading = true;
-  AppState.totalQueriesSession++;
-
-  try {
-    const res = await fetch("/api/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        feature: FEATURES.HELP_FIX,
-        input: intent || "Please identify and suggest fixes for any issues.",
-        extra: code,
-        language: AppState.language
-      }),
-    });
-    const data = await res.json();
-    
-    if (data.error) {
-      showPanelError("output-help_fix", data.error);
-    } else {
-      AppState.lastResponse = {
-        feature: FEATURES.HELP_FIX,
-        querySnippet: `[Fix] ${intent.substring(0, 150) || code.substring(0, 100)}`,
-        responseSnippet: data.response.substring(0, 300),
-        isFollowUp: false,
-      };
-      renderHelpFixResponse(data.response, code, intent);
-    }
-  } catch (err) {
-    showPanelError("output-help_fix", `Network error: ${err.message}`);
-  } finally {
-    AppState.isLoading = false;
-  }
-}
-
-function renderHelpFixResponse(text, code, intent) {
-  const out = document.getElementById("output-help_fix");
-  if (!out) return;
-
-  const lines = code.split("\n");
-
+function renderHelpFixContent(text, code) {
+  const lines = (code || "").split("\n");
   const buggyMatch = text.match(/BUGGY_LINES\|\|\|([\d,\s]+)/i);
   const buggyNums = new Set(
-    (buggyMatch ? buggyMatch[1] : "")
-      .split(",")
-      .map(n => parseInt(n.trim()))
-      .filter(n => !isNaN(n) && n > 0)
+    (buggyMatch ? buggyMatch[1] : "").split(",").map((n) => parseInt(n.trim())).filter((n) => !isNaN(n) && n > 0)
   );
-
   const suggestions = [];
   const suggRegex = /SUGGESTION\|\|\|(\d+)\|\|\|([\s\S]*?)(?=SUGGESTION\|\|\||$)/gi;
   let m;
@@ -947,138 +982,39 @@ function renderHelpFixResponse(text, code, intent) {
     suggestions.push({ index: parseInt(m[1]), text: m[2].trim() });
   }
 
-  const hasBugs = buggyNums.size > 0;
-  
-  const headerT1 = AppState.language === "id" ? `Menemukan <strong>${buggyNums.size}</strong> potensi masalah. Sorot baris merah untuk melihat hint.` : `Found <strong>${buggyNums.size}</strong> potential issue(s). Hover red lines for hints.`;
-  const headerT2 = AppState.language === "id" ? "Menganalisis pseudocode Anda..." : "Analyzing your pseudocode...";
-
-  let html = `
-    <div class="fix-header">
-      <span class="fix-icon">🔧</span>
-      <span>${hasBugs ? headerT1 : headerT2}</span>
-    </div>
-    <div class="line-explainer">
-  `;
-
+  let html = `<div class="line-explainer">`;
   lines.forEach((line, idx) => {
-    const lineNum = idx + 1;
-    const isBuggy = buggyNums.has(lineNum);
-    
-    let lineSuggText = AppState.language === "id" ? "Periksa logika pada baris ini dengan teliti." : "Review the logic on this line carefully.";
+    const num = idx + 1;
+    const isBuggy = buggyNums.has(num);
+    let suggText = t("Review this line carefully.", "Periksa baris ini dengan teliti.");
     if (isBuggy) {
-      const foundSugg = suggestions.find(s => 
-        s.text.toLowerCase().includes(`line ${lineNum}`) || 
-        s.text.toLowerCase().includes(`line ${lineNum}:`) ||
-        s.text.toLowerCase().includes(`baris ${lineNum}`) || 
-        s.text.toLowerCase().includes(`baris ${lineNum}:`)
+      const found = suggestions.find((s) =>
+        s.text.toLowerCase().includes(`line ${num}`) || s.text.toLowerCase().includes(`baris ${num}`)
       );
-      if (foundSugg) lineSuggText = foundSugg.text;
+      if (found) suggText = found.text;
     }
-
-    const fixLabel = AppState.language === "id" ? "⚠ Saran Perbaikan:" : "⚠ Suggested Fix:";
-
     html += `
-      <div class="line-row ${isBuggy ? 'buggy' : ''}" tabindex="${isBuggy ? '0' : '-1'}">
-        <div class="line-num">${lineNum}</div>
+      <div class="line-row ${isBuggy ? "buggy" : ""}" tabindex="${isBuggy ? "0" : "-1"}">
+        <div class="line-num">${num}</div>
         <div class="line-code">${escapeHtml(line) || "&nbsp;"}</div>
-        ${isBuggy ? `
-          <div class="line-tooltip buggy-tooltip" role="tooltip">
-            <strong class="tooltip-warn">${fixLabel}</strong><br>
-            ${formatText(lineSuggText)}
-          </div>
-        ` : ""}
-      </div>
-    `;
+        ${isBuggy ? `<div class="line-tooltip buggy-tooltip"><strong class="tooltip-warn">⚠ ${t("Fix:", "Perbaikan:")}</strong><br>${formatText(suggText)}</div>` : ""}
+      </div>`;
   });
-
   html += `</div>`;
 
   if (suggestions.length > 0) {
-    const suggTitle = AppState.language === "id" ? "💡 Saran Perbaikan" : "💡 Suggested Fixes";
-    html += `
-      <div class="suggestion-list">
-        <strong class="suggestion-list-title">${suggTitle}</strong>
-        ${suggestions.map(s => `
-          <div class="suggestion-item">
-            <span class="suggestion-num">${s.index}.</span>
-            <span class="suggestion-text">${formatText(s.text)}</span>
-          </div>
-        `).join("")}
-      </div>
-    `;
-  } else if (!hasBugs) {
-    const okMsg1 = AppState.language === "id" ? "✅ Tidak mendeteksi error logika yang jelas di pseudocode Anda." : "✅ No obvious issues detected in your pseudocode logic.";
-    const okMsg2 = AppState.language === "id" ? "Jika Anda masih mengalami masalah, coba jelaskan tujuan kode ini lebih detail." : "If you are still experiencing a problem, try describing the intended behavior in more detail.";
-    html += `
-      <div class="no-errors-card">
-        ${okMsg1}<br><small>${okMsg2}</small>
-      </div>
-    `;
-  }
-
-  const wrapper = document.createElement("div");
-  wrapper.innerHTML = html;
-
-  const ratingBar = createInlineRatingBar(AppState.lastResponse.feature, AppState.lastResponse.querySnippet, AppState.lastResponse.responseSnippet);
-  wrapper.appendChild(ratingBar);
-
-  out.innerHTML = "";
-  out.appendChild(wrapper);
-}
-
-//===========================================================================
-// FEATURE: HELP WRITE CODE (Split Panel)
-//===========================================================================
-
-async function submitHelpWrite() {
-  if (AppState.isLoading) return;
-  const input = DOM.inputHelpWrite?.value?.trim() || "";
-
-  if (!input) {
-    shakeElement(DOM.inputHelpWrite);
-    const warn = AppState.language === "id" ? "Tolong deskripsikan algoritma yang ingin Anda buat." : "Please describe the algorithm you want to build.";
-    showToast(warn, "warning");
-    return;
-  }
-
-  showPanelLoading("output-help_write");
-  AppState.isLoading = true;
-  AppState.totalQueriesSession++;
-
-  try {
-    const res = await fetch("/api/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        feature: FEATURES.HELP_WRITE,
-        input: input,
-        language: AppState.language
-      }),
+    html += `<div class="suggestion-list"><strong class="suggestion-list-title">💡 ${t("Suggestions", "Saran")}</strong>`;
+    suggestions.forEach((s) => {
+      html += `<div class="suggestion-item"><span class="suggestion-num">${s.index}.</span><span>${formatText(s.text)}</span></div>`;
     });
-    const data = await res.json();
-
-    if (data.error) {
-      showPanelError("output-help_write", data.error);
-    } else {
-      AppState.lastResponse = {
-        feature: FEATURES.HELP_WRITE,
-        querySnippet: input.substring(0, 200),
-        responseSnippet: data.response.substring(0, 300),
-        isFollowUp: false,
-      };
-      renderHelpWriteResponse(data.response, input);
-    }
-  } catch (err) {
-    showPanelError("output-help_write", `Network error: ${err.message}`);
-  } finally {
-    AppState.isLoading = false;
+    html += `</div>`;
+  } else if (buggyNums.size === 0) {
+    html += `<div class="no-errors-card">✅ ${t("No obvious issues detected.", "Tidak mendeteksi error logika.")}</div>`;
   }
+  return html;
 }
 
-function renderHelpWriteResponse(text, originalInput) {
-  const out = document.getElementById("output-help_write");
-  if (!out) return;
-
+function renderHelpWriteContent(text, input) {
   const tasks = [];
   const taskRegex = /TASK\|\|\|(\d+)\|\|\|([\s\S]*?)(?=TASK\|\|\||$)/gi;
   let m;
@@ -1086,68 +1022,164 @@ function renderHelpWriteResponse(text, originalInput) {
     tasks.push({ num: parseInt(m[1]), text: m[2].trim() });
   }
 
-  const hdText = AppState.language === "id" ? "Desain Algoritma — Rincian Tugas" : "Algorithm Design — Task Breakdown";
-  let html = `
-    <div class="write-header">
-      <span class="write-icon">🛠</span>
-      <span>${hdText}</span>
-    </div>
-    <p class="write-description">${escapeHtml(originalInput)}</p>
-    <div class="task-list">
-  `;
-
+  let html = "";
   if (tasks.length > 0) {
+    html += `<div class="task-list">`;
     tasks.forEach((task) => {
-      html += `
-        <div class="task-item">
-          <div class="task-num">${task.num}</div>
-          <div class="task-text">${formatText(task.text)}</div>
-        </div>
-      `;
+      html += `<div class="task-item"><div class="task-num">${task.num}</div><div class="task-text">${formatText(task.text)}</div></div>`;
     });
+    html += `</div>`;
   } else {
-    html += `<div class="task-fallback">${formatText(text)}</div>`;
+    html += `<div>${formatText(text)}</div>`;
   }
-  html += `</div>`;
-
-  const wrapper = document.createElement("div");
-  wrapper.innerHTML = html;
-
-  const ratingBar = createInlineRatingBar(AppState.lastResponse.feature, AppState.lastResponse.querySnippet, AppState.lastResponse.responseSnippet);
-  wrapper.appendChild(ratingBar);
-
-  out.innerHTML = "";
-  out.appendChild(wrapper);
+  return html;
 }
 
-//===========================================================================
-// D2: INLINE POPUP (Keyword Exploration)
-//===========================================================================
+// ==========================================================================
+// FEATURE: FROM CODE
+// ==========================================================================
+
+async function submitFromCode() {
+  if (AppState.isLoading) return;
+  const code = DOM.codeFromCode?.value?.trim() || "";
+  const question = DOM.qFromCode?.value?.trim() || "";
+  if (!code) { shakeElement(DOM.codeFromCode); showToast(t("Paste pseudocode first.", "Tempel pseudocode dahulu."), "warning"); return; }
+  if (!question) { shakeElement(DOM.qFromCode); showToast(t("Enter your question.", "Masukkan pertanyaan Anda."), "warning"); return; }
+
+  AppState.isLoading = true;
+  AppState.totalQueriesSession++;
+  renderMultiModelOutput("output-from_code", FEATURES.FROM_CODE, question, code);
+}
+
+// ==========================================================================
+// FEATURE: EXPLAIN CODE
+// ==========================================================================
+
+async function submitExplain() {
+  if (AppState.isLoading) return;
+  const code = DOM.codeExplain?.value?.trim() || "";
+  if (!code) { shakeElement(DOM.codeExplain); showToast(t("Paste pseudocode to explain.", "Tempel pseudocode."), "warning"); return; }
+
+  AppState.isLoading = true;
+  AppState.totalQueriesSession++;
+  renderMultiModelOutput("output-explain", FEATURES.EXPLAIN, code, code);
+}
+
+// ==========================================================================
+// FEATURE: HELP FIX
+// ==========================================================================
+
+async function submitHelpFix() {
+  if (AppState.isLoading) return;
+  const code = DOM.codeHelpFix?.value?.trim() || "";
+  const intent = DOM.intentHelpFix?.value?.trim() || "";
+  if (!code) { shakeElement(DOM.codeHelpFix); showToast(t("Paste pseudocode first.", "Tempel pseudocode dahulu."), "warning"); return; }
+
+  const input = intent || t("Please identify and suggest fixes.", "Tolong identifikasi dan sarankan perbaikan.");
+  AppState.isLoading = true;
+  AppState.totalQueriesSession++;
+  renderMultiModelOutput("output-help_fix", FEATURES.HELP_FIX, input, code);
+}
+
+// ==========================================================================
+// FEATURE: HELP WRITE
+// ==========================================================================
+
+async function submitHelpWrite() {
+  if (AppState.isLoading) return;
+  const input = DOM.inputHelpWrite?.value?.trim() || "";
+  if (!input) { shakeElement(DOM.inputHelpWrite); showToast(t("Describe the algorithm.", "Deskripsikan algoritma."), "warning"); return; }
+
+  AppState.isLoading = true;
+  AppState.totalQueriesSession++;
+  renderMultiModelOutput("output-help_write", FEATURES.HELP_WRITE, input, "");
+}
+
+// ==========================================================================
+// GENERIC MULTI-MODEL OUTPUT RENDERER (For Split Panel features)
+// ==========================================================================
+
+async function renderMultiModelOutput(outputId, feature, input, extra) {
+  const out = document.getElementById(outputId);
+  if (!out) { AppState.isLoading = false; return; }
+
+  const modelIds = [...AppState.selectedModelIds];
+  const isSingle = modelIds.length === 1;
+
+  // Show loading cards
+  out.innerHTML = "";
+  if (isSingle) {
+    showPanelLoading(outputId);
+  } else {
+    const gridClass = modelIds.length === 2 ? "two-models" : "three-models";
+    const grid = document.createElement("div");
+    grid.className = `comparison-grid ${gridClass}`;
+    grid.id = `grid-${outputId}`;
+    modelIds.forEach((id) => grid.appendChild(createModelLoadingCard(id)));
+    out.appendChild(grid);
+  }
+
+  try {
+    const results = await askMultiModel(feature, input, extra);
+
+    if (isSingle) {
+      const modelId = modelIds[0];
+      const r = results[modelId];
+      if (r && r.is_error) {
+        showPanelError(outputId, `[${r.label}] ${r.error}`);
+      } else if (r) {
+        const wrapper = document.createElement("div");
+        const card = createModelResponseCard(r, modelId, feature, extra || input);
+        wrapper.appendChild(card);
+        out.innerHTML = "";
+        out.appendChild(wrapper);
+      }
+    } else {
+      // Multi-model → replace loading cards with real cards
+      const gridClass = modelIds.length === 2 ? "two-models" : "three-models";
+      const grid = document.createElement("div");
+      grid.className = `comparison-grid ${gridClass}`;
+
+      modelIds.forEach((modelId) => {
+        const r = results[modelId];
+        if (r) {
+          grid.appendChild(createModelResponseCard(r, modelId, feature, extra || input));
+        }
+      });
+      out.innerHTML = "";
+      out.appendChild(grid);
+    }
+  } catch (err) {
+    showPanelError(outputId, err.message || "Network error");
+  } finally {
+    AppState.isLoading = false;
+  }
+}
+
+// ==========================================================================
+// INLINE POPUP (Keyword Exploration)
+// ==========================================================================
 
 async function openInlinePopup(keyword, triggerEl) {
   if (!DOM.inlinePopup || !DOM.popupBody || !DOM.popupKeyword) return;
-  
+
   AppState.inlinePopupKeyword = keyword;
   DOM.popupKeyword.textContent = keyword;
-  
-  const rect = triggerEl.getBoundingClientRect();
-  let left = rect.right + 12;
-  let top = rect.top;
-  
-  if (left + 370 > window.innerWidth) left = rect.left - 380;
-  if (top + 300 > window.innerHeight) top = rect.top - 280;
 
-  DOM.inlinePopup.style.left = `${Math.max(8, left)}px`;
-  DOM.inlinePopup.style.top = `${Math.max(8, top)}px`;
+  // Position
+  const isMobile = window.innerWidth < 768;
+  if (!isMobile) {
+    const rect = triggerEl.getBoundingClientRect();
+    let left = rect.right + 12;
+    let top = rect.top;
+    if (left + 370 > window.innerWidth) left = rect.left - 380;
+    if (top + 300 > window.innerHeight) top = rect.top - 280;
+    DOM.inlinePopup.style.left = `${Math.max(8, left)}px`;
+    DOM.inlinePopup.style.top = `${Math.max(8, top)}px`;
+  }
+
   DOM.inlinePopup.classList.remove("hidden");
-
-  const loadText = AppState.language === "id" ? "Memuat..." : "Loading...";
-  DOM.popupBody.innerHTML = `
-    <div class="popup-loading">
-      <div class="typing-dots"><span></span><span></span><span></span></div>
-      <span>${loadText}</span>
-    </div>
-  `;
+  DOM.popupBody.innerHTML = `<div class="popup-loading"><div class="typing-dots"><span></span><span></span><span></span></div><span>${t("Loading...", "Memuat...")}</span></div>`;
 
   try {
     const res = await fetch("/api/explore", {
@@ -1156,64 +1188,44 @@ async function openInlinePopup(keyword, triggerEl) {
       body: JSON.stringify({ keyword, language: AppState.language }),
     });
     const data = await res.json();
-
     if (data.error) {
       DOM.popupBody.innerHTML = `<p class="popup-error">⚠ ${escapeHtml(data.error)}</p>`;
     } else {
       renderInlinePopupContent(data.response, keyword);
     }
   } catch (err) {
-    DOM.popupBody.innerHTML = `<p class="popup-error">Network error: ${escapeHtml(err.message)}</p>`;
+    DOM.popupBody.innerHTML = `<p class="popup-error">${escapeHtml(err.message)}</p>`;
   }
 }
 
 function renderInlinePopupContent(text, keyword) {
   if (!DOM.popupBody) return;
-  
-  const def = text.match(/DEF\|\|\|([\s\S]*?)(?=EXAMPLE\|\|\||RELATED\|\|\||$)/i)?.[1]?.trim() || "No definition available.";
+  const def = text.match(/DEF\|\|\|([\s\S]*?)(?=EXAMPLE\|\|\||RELATED\|\|\||$)/i)?.[1]?.trim() || "";
   const example = text.match(/EXAMPLE\|\|\|([\s\S]*?)(?=RELATED\|\|\||$)/i)?.[1]?.trim() || "";
   const related = text.match(/RELATED\|\|\|(.*)/i)?.[1]?.trim() || "";
 
   let html = `<p class="popup-def">${formatText(def)}</p>`;
-  
   if (example) {
-    const exLabel = AppState.language === "id" ? "Contoh Ilustrasi:" : "Illustrative Example:";
-    html += `
-      <div class="popup-example-label">${exLabel}</div>
-      <pre class="popup-example"><code>${escapeHtml(example)}</code></pre>
-    `;
+    html += `<div class="popup-example-label">${t("Example:", "Contoh:")}</div><pre class="popup-example"><code>${escapeHtml(example)}</code></pre>`;
   }
-  
   if (related) {
-    const relLabel = AppState.language === "id" ? "Pelajari selanjutnya:" : "Explore next:";
-    html += `
-      <div class="popup-related">
-        <span class="popup-related-label">${relLabel}</span>
-        <button class="inline-keyword" onclick='openInlinePopup(${JSON.stringify(related)}, this)'>${escapeHtml(related)}</button>
-      </div>
-    `;
+    html += `<div class="popup-related"><span class="popup-related-label">${t("Explore next:", "Pelajari:")}</span>
+      <button class="inline-keyword" onclick='openInlinePopup(${JSON.stringify(related)}, this)'>${escapeHtml(related)}</button></div>`;
   }
+  html += `<div class="popup-actions">
+    <button class="btn btn-sm btn-ghost" onclick="closeInlinePopup()">${t("Back", "Kembali")}</button>
+    <button class="btn btn-sm btn-primary" style="flex:1;" onclick='popupAskFollowUp(${JSON.stringify(keyword)})'>${t("Ask about this ➔", "Tanyakan lebih dalam ➔")}</button>
+  </div>`;
 
-  // Teks Tombol
-  const askText = AppState.language === "id" ? "Tanyakan lebih dalam ➔" : "Ask about this ➔";
-  const backText = AppState.language === "id" ? "Kembali" : "Back";
-
-  html += `
-    <div class="popup-actions" style="display:flex; gap:8px; margin-top:12px; border-top:1px solid var(--border); padding-top:10px;">
-      <button class="btn btn-sm btn-ghost popup-close-action" onclick='closeInlinePopup()'>${backText}</button>
-      <button class="btn btn-sm btn-primary popup-ask-btn" style="flex:1;" onclick='popupAskFollowUp(${JSON.stringify(keyword)})'>${askText}</button>
-    </div>
-  `;
-  
   DOM.popupBody.innerHTML = html;
 }
 
 function popupAskFollowUp(keyword) {
-  const langQuery = AppState.language === "id" ? `Bisa tolong jelaskan lebih lanjut mengenai "${keyword}"?` : `Can you explain more about "${keyword}" in the context of algorithms?`;
+  const query = t(`Can you explain more about "${keyword}"?`, `Bisa jelaskan lebih lanjut mengenai "${keyword}"?`);
   closeInlinePopup();
   switchView(FEATURES.GENERAL);
-  if (DOM.inputGeneral) DOM.inputGeneral.value = langQuery;
-  submitFollowUp(langQuery);
+  if (DOM.inputGeneral) DOM.inputGeneral.value = query;
+  submitFollowUp(query);
 }
 
 function closeInlinePopup() {
@@ -1225,174 +1237,304 @@ function initInlinePopupDismiss() {
   document.addEventListener("click", (e) => {
     if (!DOM.inlinePopup) return;
     const isPopup = DOM.inlinePopup.contains(e.target);
-    const isKeyword = e.target.classList.contains("inline-keyword") || e.target.classList.contains("task-keyword");
+    const isKeyword = e.target.classList.contains("inline-keyword");
     if (!isPopup && !isKeyword) closeInlinePopup();
+  });
+
+  // Close model dropdown when clicking outside
+  document.addEventListener("click", (e) => {
+    if (!DOM.modelDropdown || DOM.modelDropdown.classList.contains("hidden")) return;
+    const isToggle = DOM.modelSelectorToggle?.contains(e.target);
+    const isDropdown = DOM.modelDropdown.contains(e.target);
+    if (!isToggle && !isDropdown) closeModelDropdown();
   });
 }
 
-//===========================================================================
-// INLINE RATING BAR -> TRIGGERS MODAL
-//===========================================================================
+// ==========================================================================
+// FEEDBACK STATE MANAGEMENT (Lock & Edit)
+// ==========================================================================
 
-function createInlineRatingBar(feature, querySnippet, responseSnippet) {
-  const bar = document.createElement("div");
-  bar.className = "inline-rating-bar";
-  
-  const label = AppState.language === "id" ? "Seberapa berguna jawaban ini?" : "How useful was this?";
-  
-  bar.innerHTML = `
-    <span class="inline-rating-label">${label}</span>
+/**
+ * Generate unique key untuk satu feedback berdasarkan
+ * feature + modelId + hash dari query
+ */
+function getFeedbackKey(feature, modelId, querySnippet) {
+  const hash = simpleHash((querySnippet || "").substring(0, 100));
+  return `${feature}::${modelId}::${hash}`;
+}
+
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const chr = str.charCodeAt(i);
+    hash = (hash << 5) - hash + chr;
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function loadFeedbackFromStorage() {
+  try {
+    const data = JSON.parse(sessionStorage.getItem(FEEDBACK_KEY) || "{}");
+    AppState.givenFeedback = data;
+  } catch (e) {
+    AppState.givenFeedback = {};
+  }
+}
+
+function saveFeedbackToStorage(feedbackKey, rating, comment) {
+  try {
+    AppState.givenFeedback[feedbackKey] = {
+      rating,
+      comment: comment || "",
+      timestamp: new Date().toISOString(),
+    };
+    sessionStorage.setItem(FEEDBACK_KEY, JSON.stringify(AppState.givenFeedback));
+  } catch (e) {
+    console.warn("[StructCode] Failed to save feedback:", e);
+  }
+}
+
+function getStoredFeedback(feedbackKey) {
+  return AppState.givenFeedback[feedbackKey] || null;
+}
+
+/**
+ * Lock semua rating bar yang punya feedbackKey sama
+ * (penting untuk multi-tab atau setelah refresh)
+ */
+function lockAllRatingBarsWithKey(feedbackKey, rating) {
+  document.querySelectorAll(`.inline-rating-bar[data-feedback-key="${feedbackKey}"]`).forEach((bar) => {
+    renderLockedRatingBar(bar, rating);
+  });
+}
+
+/**
+ * Render bar dalam state LOCKED (sudah ada feedback)
+ */
+function renderLockedRatingBar(barEl, rating) {
+  if (!barEl) return;
+  const meta = RATING_LABELS[rating];
+  if (!meta) return;
+  const lbl = meta[AppState.language] || meta.en;
+
+  barEl.classList.add("locked");
+  barEl.innerHTML = `
+    <div class="locked-rating-display">
+      <span class="locked-rating-check">✓</span>
+      <span class="locked-rating-text">${t("You rated:", "Anda menilai:")}</span>
+      <span class="locked-rating-emoji">${meta.emoji}</span>
+      <span class="locked-rating-label" style="color:${meta.color}">${lbl}</span>
+    </div>
+    <button class="rating-edit-btn" title="${t("Edit feedback", "Ubah feedback")}" aria-label="Edit">
+      ✏
+    </button>
+  `;
+
+  // Bind edit button
+  const editBtn = barEl.querySelector(".rating-edit-btn");
+  if (editBtn) {
+    editBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const feature = barEl.dataset.feature;
+      const querySnippet = barEl.dataset.query || "";
+      const responseSnippet = barEl.dataset.response || "";
+      const modelId = barEl.dataset.modelId || "";
+      const feedbackKey = barEl.dataset.feedbackKey;
+      const stored = getStoredFeedback(feedbackKey);
+
+      openRatingModal(
+        feature,
+        querySnippet,
+        responseSnippet,
+        false,
+        stored?.rating || 0,
+        modelId,
+        true,                  // isEdit flag
+        stored?.comment || ""
+      );
+    });
+  }
+}
+
+/**
+ * Render bar dalam state INTERACTIVE (belum ada feedback)
+ */
+function renderInteractiveRatingBar(barEl) {
+  if (!barEl) return;
+  barEl.classList.remove("locked");
+  barEl.innerHTML = `
+    <span class="inline-rating-label">${t("How useful?", "Seberapa berguna?")}</span>
     <div class="inline-rating-stars">
       ${[1, 2, 3, 4, 5].map((v) => {
-        // Translate emoji label if ID
-        const lbl = AppState.language === "id" ? 
-          {1:"Sangat Buruk", 2:"Buruk", 3:"Netral", 4:"Berguna", 5:"Sangat Berguna"}[v] : RATING_LABELS[v].label;
-          
-        return `
-          <button class="inline-star-btn" data-value="${v}" title="${lbl}" aria-label="Rate ${v} stars">
-            <span class="star-emoji">${RATING_LABELS[v].emoji}</span>
-            <span class="star-text">${lbl}</span>
-          </button>
-        `;
+        const meta = RATING_LABELS[v];
+        const lbl = meta[AppState.language] || meta.en;
+        return `<button class="inline-star-btn" data-value="${v}" title="${lbl}">
+          <span class="star-emoji">${meta.emoji}</span>
+          <span class="star-text">${lbl}</span>
+        </button>`;
       }).join("")}
     </div>
   `;
 
-  bar.querySelectorAll(".inline-star-btn").forEach((btn) => {
+  // Bind click handlers
+  barEl.querySelectorAll(".inline-star-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const rating = parseInt(btn.dataset.value);
-      openRatingModal(feature, querySnippet, responseSnippet, false, rating);
+      openRatingModal(
+        barEl.dataset.feature,
+        barEl.dataset.query || "",
+        barEl.dataset.response || "",
+        false,
+        rating,
+        barEl.dataset.modelId || "",
+        false,
+        ""
+      );
     });
   });
+}
+
+// ==========================================================================
+// INLINE RATING BAR
+// ==========================================================================
+
+function createInlineRatingBar(feature, querySnippet, responseSnippet, modelId = "") {
+  const bar = document.createElement("div");
+  bar.className = "inline-rating-bar";
+
+  const feedbackKey = getFeedbackKey(feature, modelId, querySnippet);
+
+  // Simpan metadata di dataset (agar bisa diakses saat edit)
+  bar.dataset.feedbackKey = feedbackKey;
+  bar.dataset.feature = feature;
+  bar.dataset.query = querySnippet;
+  bar.dataset.response = responseSnippet;
+  bar.dataset.modelId = modelId;
+
+  // Cek apakah sudah ada feedback
+  const stored = getStoredFeedback(feedbackKey);
+  if (stored && stored.rating) {
+    renderLockedRatingBar(bar, stored.rating);
+  } else {
+    renderInteractiveRatingBar(bar);
+  }
 
   return bar;
 }
 
-//===========================================================================
-// RATING MODAL & LOCALSTORAGE
-//===========================================================================
+// ==========================================================================
+// RATING MODAL
+// ==========================================================================
 
-function openRatingModal(feature, querySnippet, responseSnippet, isFollowUp = false, preselectedRating = 0) {
+function openRatingModal(feature, querySnippet, responseSnippet, isFollowUp = false, preselectedRating = 0, modelId = "", isEdit = false, prefillComment = "") {
   if (!DOM.ratingModal) return;
+  AppState.lastResponse = { feature, querySnippet, responseSnippet, isFollowUp, modelId, isEdit };
 
-  AppState.lastResponse = { feature, querySnippet, responseSnippet, isFollowUp };
   const body = DOM.ratingModal.querySelector(".modal-body");
   if (!body) return;
 
-  const tTitle = AppState.language === "id" ? "Feedback Anda Sangat Membantu!" : "Your Feedback Helps!";
-  const tFeat = AppState.language === "id" ? "Fitur:" : "Feature:";
-  const tOpt = AppState.language === "id" ? "Opsional: Beritahu kami alasannya (Draf tersimpan lokal)" : "Optional: Tell us why (Your draft is saved locally)";
-  const tPlace = AppState.language === "id" ? "Contoh: Penjelasannya bagus tapi kurang contoh..." : "e.g., It explained the concept clearly but lacked an example...";
-  const tSkip = AppState.language === "id" ? "Lewati dulu" : "Skip for now";
-  const tSub = AppState.language === "id" ? "Kirim Feedback" : "Submit Feedback";
-  const tPriv = AppState.language === "id" ? "Penilaian bersifat anonim dan hanya digunakan untuk riset." : "Ratings are anonymous and used only for research.";
+  const modelInfo = getModelInfo(modelId);
+  const modelLabel = modelInfo.label || "AI";
+  const titleText = isEdit
+    ? t("Edit Your Feedback", "Ubah Feedback Anda")
+    : t("Your Feedback Helps!", "Feedback Anda Sangat Membantu!");
 
   body.innerHTML = `
-    <h3 class="modal-title">${tTitle}</h3>
-    <p class="modal-subtitle">
-      ${tFeat} <strong>${FEATURE_META[feature]?.label || feature}</strong>
-    </p>
-
+    <h3 class="modal-title">${titleText}</h3>
+    <p class="modal-subtitle">${t("Feature:", "Fitur:")} <strong>${feature}</strong> · ${t("Model:", "Model:")} <strong>${modelLabel}</strong></p>
     <div class="rating-stars" role="group">
       ${Object.entries(RATING_LABELS).map(([val, meta]) => {
-        const lbl = AppState.language === "id" ? 
-          {1:"Sangat Buruk", 2:"Buruk", 3:"Netral", 4:"Berguna", 5:"Sangat Berguna"}[val] : meta.label;
-        return `
-          <button class="star-btn" data-rating="${val}" title="${lbl}" onclick="selectRating(${val})">
-            <span class="star-emoji">${meta.emoji}</span>
-            <span class="star-num">${val}</span>
-            <span class="star-label">${lbl}</span>
-          </button>
-        `;
+        const lbl = meta[AppState.language] || meta.en;
+        return `<button class="star-btn" data-rating="${val}" title="${lbl}" onclick="selectRating(${val})">
+          <span class="star-emoji">${meta.emoji}</span><span class="star-num">${val}</span><span class="star-label">${lbl}</span>
+        </button>`;
       }).join("")}
     </div>
-
     <div class="rating-comment-wrap">
-      <label for="rating-comment" class="rating-comment-label">${tOpt}</label>
-      <textarea id="rating-comment" class="rating-comment" placeholder="${tPlace}" rows="3" maxlength="500"></textarea>
+      <label class="rating-comment-label">${t("Optional: Tell us why", "Opsional: Beritahu alasannya")}</label>
+      <textarea id="rating-comment" class="rating-comment" placeholder="${t("e.g., It explained clearly but...", "Contoh: Penjelasannya jelas tapi...")}" rows="3" maxlength="500"></textarea>
       <span class="char-count" id="rating-char-count">0 / 500</span>
     </div>
-
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeRatingModal()">${tSkip}</button>
-      <button class="btn btn-primary" id="btn-submit-rating" onclick="submitRating()" disabled>${tSub}</button>
+      <button class="btn btn-ghost" onclick="closeRatingModal()">${isEdit ? t("Cancel", "Batal") : t("Skip", "Lewati")}</button>
+      <button class="btn btn-primary" id="btn-submit-rating" onclick="submitRating()" disabled>
+        ${isEdit ? t("Update", "Perbarui") : t("Submit", "Kirim")}
+      </button>
     </div>
-    
-    <p class="rating-privacy-note">${tPriv}</p>
+    <p class="rating-privacy-note">${t("Ratings are anonymous and used for research.", "Penilaian anonim dan hanya untuk riset.")}</p>
   `;
 
   DOM.ratingModal.classList.remove("hidden");
-  DOM.ratingModal.classList.add("visible");
 
+  // Setup comment box (prefill if edit)
   const commentBox = body.querySelector("#rating-comment");
   const countBox = body.querySelector("#rating-char-count");
   if (commentBox && countBox) {
-    const draft = localStorage.getItem("sc_draft_comment") || "";
-    commentBox.value = draft;
-    countBox.textContent = `${draft.length} / 500`;
-
+    const initialComment = prefillComment || (localStorage.getItem("sc_draft_comment") || "");
+    commentBox.value = initialComment;
+    countBox.textContent = `${initialComment.length} / 500`;
     commentBox.addEventListener("input", (e) => {
-      localStorage.setItem("sc_draft_comment", e.target.value);
+      if (!isEdit) localStorage.setItem("sc_draft_comment", e.target.value);
       countBox.textContent = `${e.target.value.length} / 500`;
     });
   }
 
-  if (preselectedRating > 0 && preselectedRating <= 5) {
-    selectRating(preselectedRating);
-  }
+  if (preselectedRating > 0) selectRating(preselectedRating);
 }
 
 function selectRating(value) {
   const buttons = DOM.ratingModal?.querySelectorAll(".star-btn");
   buttons?.forEach((btn) => {
-    const btnVal = parseInt(btn.dataset.rating);
-    btn.classList.toggle("selected", btnVal === value);
-    btn.classList.toggle("dimmed", btnVal !== value);
-    if (RATING_LABELS[btnVal]) {
-      btn.style.borderColor = btnVal === value ? RATING_LABELS[btnVal].color : "transparent";
-    }
+    const v = parseInt(btn.dataset.rating);
+    btn.classList.toggle("selected", v === value);
+    btn.classList.toggle("dimmed", v !== value);
+    btn.style.borderColor = v === value ? (RATING_LABELS[v]?.color || "transparent") : "transparent";
   });
-
   const submitBtn = DOM.ratingModal?.querySelector("#btn-submit-rating");
-  if (submitBtn) {
-    submitBtn.disabled = false;
-    submitBtn.dataset.rating = value;
-  }
+  if (submitBtn) { submitBtn.disabled = false; submitBtn.dataset.rating = value; }
 }
 
 async function submitRating() {
   const submitBtn = DOM.ratingModal?.querySelector("#btn-submit-rating");
   const rating = parseInt(submitBtn?.dataset.rating);
-  const commentBox = DOM.ratingModal?.querySelector("#rating-comment");
-  const comment = commentBox?.value?.trim() || "";
-
+  const comment = DOM.ratingModal?.querySelector("#rating-comment")?.value?.trim() || "";
   if (!rating || rating < 1 || rating > 5) return;
+
+  const { feature, querySnippet, responseSnippet, isFollowUp, modelId, isEdit } = AppState.lastResponse;
 
   try {
     await fetch("/api/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        feature: AppState.lastResponse.feature,
-        rating: rating,
-        comment: comment,
-        snippet: AppState.lastResponse.responseSnippet,
-        query_snippet: AppState.lastResponse.querySnippet,
-        is_follow_up: AppState.lastResponse.isFollowUp,
+        feature,
+        model_id: modelId,
+        rating,
+        comment,
+        snippet: responseSnippet,
+        query_snippet: querySnippet,
+        is_follow_up: isFollowUp,
+        is_edit: isEdit || false,
       }),
     });
-    
-    const msg = AppState.language === "id" ? "Feedback terkirim:" : "Feedback submitted:";
-    showToast(`${msg} ${RATING_LABELS[rating].emoji}`, "success");
-    
-    localStorage.removeItem("sc_draft_comment");
-    if(commentBox) commentBox.value = "";
-    
-  } catch {
-    const err = AppState.language === "id" ? "Gagal mengirim rating. Coba lagi." : "Could not submit rating. Please try again.";
-    showToast(err, "error");
-  }
 
+    // Save ke localStorage
+    const feedbackKey = getFeedbackKey(feature, modelId, querySnippet);
+    saveFeedbackToStorage(feedbackKey, rating, comment);
+
+    // Lock semua bar dengan key sama (penting jika ada bar duplikat)
+    lockAllRatingBarsWithKey(feedbackKey, rating);
+
+    const successMsg = isEdit
+      ? t("Feedback updated:", "Feedback diperbarui:")
+      : t("Feedback submitted:", "Feedback terkirim:");
+    showToast(`${successMsg} ${RATING_LABELS[rating].emoji}`, "success");
+
+    if (!isEdit) localStorage.removeItem("sc_draft_comment");
+  } catch {
+    showToast(t("Failed to submit.", "Gagal mengirim."), "error");
+  }
   closeRatingModal();
 }
 
@@ -1400,75 +1542,57 @@ function closeRatingModal() {
   if (DOM.ratingModal) DOM.ratingModal.classList.add("hidden");
 }
 
-//===========================================================================
-// WEEKLY SURVEY MODAL (RQ3)
-//===========================================================================
+// ==========================================================================
+// SURVEY MODAL
+// ==========================================================================
 
 function openSurveyModal() {
   if (!DOM.surveyModal) return;
   const body = DOM.surveyModal.querySelector(".modal-body");
   if (!body) return;
 
-  const currentWeek = Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1)) / (1000 * 60 * 60 * 24 * 7));
+  const week = Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1)) / (1000 * 60 * 60 * 24 * 7));
 
-  // Simplified for translation constraints (Hardcoded for demo mostly)
   body.innerHTML = `
-    <h3 class="modal-title">Weekly Usage Survey</h3>
-    <p class="modal-subtitle">Week ${currentWeek} — How are you using course resources?</p>
-    
+    <h3 class="modal-title">${t("Weekly Usage Survey", "Survei Penggunaan Mingguan")}</h3>
+    <p class="modal-subtitle">${t("Week", "Minggu")} ${week}</p>
     <div class="survey-section">
-      <h4 class="survey-section-title">How often did you use these resources this week?</h4>
-      <p class="survey-scale-note">Scale: 1 = Never, 5 = Very Often</p>
-      <div class="survey-resources">
-        ${SURVEY_RESOURCES.map(r => `
-          <div class="survey-resource-row">
-            <label for="sr-${r.id}" class="survey-resource-label">${r.label}</label>
-            <div class="survey-likert" role="group">
-              ${[1, 2, 3, 4, 5].map(v => `
-                <label class="likert-option">
-                  <input type="radio" name="sr-${r.id}" value="${v}">
-                  <span class="likert-val">${v}</span>
-                </label>
-              `).join("")}
-            </div>
-          </div>
-        `).join("")}
+      <h4>${t("How useful was StructCode this week?", "Seberapa berguna StructCode minggu ini?")}</h4>
+      <div class="rating-stars">${[1, 2, 3, 4, 5].map((v) => `
+        <label class="star-btn" style="cursor:pointer;">
+          <input type="radio" name="sc-useful" value="${v}" style="display:none;">
+          <span class="star-emoji">${RATING_LABELS[v].emoji}</span><span class="star-num">${v}</span>
+        </label>`).join("")}
       </div>
     </div>
-
-    <div class="survey-section">
-      <h4 class="survey-section-title">Overall, how useful did you find StructCode this week?</h4>
-      <div class="survey-likert" role="group">
-        ${[1, 2, 3, 4, 5].map(v => `
-          <label class="likert-option">
-            <input type="radio" name="sc-useful" value="${v}">
-            <span class="likert-val">${v}</span>
-          </label>
-        `).join("")}
-      </div>
+    <div class="survey-section" style="margin-top:var(--space-md);">
+      <h4>${t("Open feedback", "Feedback terbuka")}</h4>
+      <textarea id="survey-open" rows="3" placeholder="${t("Any thoughts...", "Pendapat Anda...")}" style="width:100%;"></textarea>
     </div>
-
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeSurveyModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="submitSurvey()">Submit Survey</button>
+      <button class="btn btn-ghost" onclick="closeSurveyModal()">${t("Cancel", "Batal")}</button>
+      <button class="btn btn-primary" onclick="submitSurvey()">${t("Submit", "Kirim")}</button>
     </div>
   `;
 
+  // Star selection
+  body.querySelectorAll('.star-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      body.querySelectorAll('.star-btn').forEach((b) => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      const radio = btn.querySelector('input[type="radio"]');
+      if (radio) radio.checked = true;
+    });
+  });
+
   DOM.surveyModal.classList.remove("hidden");
-  DOM.surveyModal.classList.add("visible");
 }
 
 async function submitSurvey() {
   const modal = DOM.surveyModal;
   if (!modal) return;
-
-  const usageData = {};
-  SURVEY_RESOURCES.forEach(r => {
-    const checked = modal.querySelector(`input[name="sr-${r.id}"]:checked`);
-    usageData[`${r.id}_usage`] = checked ? parseInt(checked.value) : null;
-  });
-
-  const usefulChecked = modal.querySelector('input[name="sc-useful"]:checked');
+  const useful = modal.querySelector('input[name="sc-useful"]:checked');
+  const open = modal.querySelector("#survey-open")?.value?.trim() || "";
 
   try {
     await fetch("/api/survey", {
@@ -1476,12 +1600,13 @@ async function submitSurvey() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         week_number: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1)) / (1000 * 60 * 60 * 24 * 7)),
-        usefulness_rating: usefulChecked ? parseInt(usefulChecked.value) : null,
+        usefulness_rating: useful ? parseInt(useful.value) : null,
+        open_feedback: open,
       }),
     });
-    showToast("Survey submitted. Thank you!", "success");
+    showToast(t("Survey submitted!", "Survei terkirim!"), "success");
   } catch {
-    showToast("Could not submit survey.", "error");
+    showToast(t("Failed to submit.", "Gagal mengirim."), "error");
   }
   closeSurveyModal();
 }
@@ -1490,85 +1615,237 @@ function closeSurveyModal() {
   if (DOM.surveyModal) DOM.surveyModal.classList.add("hidden");
 }
 
-//===========================================================================
-// ANALYTICS PANEL (Hanya untuk Teacher)
-//===========================================================================
+// ==========================================================================
+// ANALYTICS PANEL
+// ==========================================================================
 
 async function loadAnalytics() {
   if (!DOM.analyticsPanel) return;
-  DOM.analyticsPanel.innerHTML = `
-    <div class="analytics-loading">
-      <div class="typing-dots"><span></span><span></span><span></span></div>
-      Loading analytics...
-    </div>
-  `;
+  DOM.analyticsPanel.innerHTML = `<div class="analytics-loading"><div class="typing-dots"><span></span><span></span><span></span></div>${t("Loading...", "Memuat...")}</div>`;
   DOM.analyticsPanel.classList.remove("hidden");
 
   try {
     const res = await fetch("/api/analytics/summary");
     const data = await res.json();
-    if (res.ok) {
-       renderAnalytics(data);
-    } else {
-       DOM.analyticsPanel.innerHTML = `<p class="analytics-error">${data.error || "Akses Ditolak."}</p>
-       <button class="btn btn-sm" style="margin:auto; display:block;" onclick="DOM.analyticsPanel.classList.add('hidden')">Close</button>`;
-    }
+    if (res.ok) renderAnalytics(data);
+    else DOM.analyticsPanel.innerHTML = `<p class="analytics-error">${data.error || "Access denied."}</p><button class="btn btn-sm" style="margin:10px auto;display:block;" onclick="DOM.analyticsPanel.classList.add('hidden')">Close</button>`;
   } catch {
-    DOM.analyticsPanel.innerHTML = `<p class="analytics-error">Could not load analytics.</p>`;
+    DOM.analyticsPanel.innerHTML = `<p class="analytics-error">Failed to load analytics.</p>`;
   }
 }
 
 function renderAnalytics(data) {
   if (!DOM.analyticsPanel) return;
 
-  const featureRows = Object.entries(data.feature_counts || {})
-    .map(([feat, count]) => {
-      const meta = FEATURE_META[feat] || { icon: "•", label: feat };
-      const pct = data.feature_usage_pct?.[feat] ?? 0;
-      const paper = data.paper_baseline_pct?.[feat] ?? 0;
-      const avgRating = data.avg_ratings?.[feat];
-      return `
-        <tr class="analytics-row">
-          <td>${meta.icon} ${feat}</td>
-          <td class="analytics-num">${count}</td>
-          <td class="analytics-num">${pct.toFixed(1)}%</td>
-          <td class="analytics-num analytics-dim">${paper}%</td>
-          <td class="analytics-num">${avgRating ? `${avgRating} ★` : "—"}</td>
-        </tr>
-      `;
-    }).join("");
+  const featureRows = Object.entries(data.feature_counts || {}).map(([feat, count]) => {
+    const pct = data.feature_usage_pct?.[feat] ?? 0;
+    const paper = data.paper_baseline_pct?.[feat] ?? 0;
+    const avg = data.avg_ratings?.[feat];
+    return `<tr><td>${feat}</td><td>${count}</td><td>${pct.toFixed(1)}%</td><td>${paper}%</td><td>${avg ? `${avg} ★` : "—"}</td></tr>`;
+  }).join("");
+
+  const modelRows = Object.entries(data.model_usage || {}).map(([label, count]) => {
+    return `<tr><td>${label}</td><td>${count}</td></tr>`;
+  }).join("");
 
   DOM.analyticsPanel.innerHTML = `
     <div class="analytics-header">
-      <h3>📊 Usage Analytics (Kelas ${data.target_class || 'All'})</h3>
+      <h3>📊 ${t("Usage Analytics", "Analitik Penggunaan")} (${data.target_class || "All"})</h3>
       <button class="btn btn-sm" onclick="DOM.analyticsPanel.classList.add('hidden')">Close</button>
     </div>
     <div class="analytics-summary">
-      <div class="analytics-stat">
-        <span class="stat-val">${data.total_queries ?? 0}</span>
-        <span class="stat-label">Total Queries</span>
-      </div>
-      <div class="analytics-stat">
-        <span class="stat-val">${data.unique_sessions_count ?? 0}</span>
-        <span class="stat-label">Sessions</span>
-      </div>
-      <div class="analytics-stat">
-        <span class="stat-val">${((data.error_rate ?? 0) * 100).toFixed(1)}%</span>
-        <span class="stat-label">Error Rate</span>
-      </div>
+      <div class="analytics-stat"><span class="stat-val">${data.total_queries ?? 0}</span><span class="stat-label">${t("Queries", "Kueri")}</span></div>
+      <div class="analytics-stat"><span class="stat-val">${data.unique_sessions_count ?? 0}</span><span class="stat-label">${t("Sessions", "Sesi")}</span></div>
+      <div class="analytics-stat"><span class="stat-val">${((data.error_rate ?? 0) * 100).toFixed(1)}%</span><span class="stat-label">${t("Error Rate", "Error")}</span></div>
     </div>
-    <table class="analytics-table">
-      <thead>
-        <tr><th>Feature</th><th>Count</th><th>Class %</th><th>Baseline %</th><th>Avg Rating</th></tr>
-      </thead>
-      <tbody>${featureRows}</tbody>
-    </table>
+    <h4 style="margin:var(--space-md) 0 var(--space-sm);color:var(--text-bright);font-size:var(--font-size-sm);">${t("Feature Usage", "Penggunaan Fitur")}</h4>
+    <table class="analytics-table"><thead><tr><th>${t("Feature", "Fitur")}</th><th>#</th><th>%</th><th>${t("Baseline", "Baseline")}</th><th>${t("Rating", "Rating")}</th></tr></thead><tbody>${featureRows}</tbody></table>
+    ${modelRows ? `
+    <h4 style="margin:var(--space-lg) 0 var(--space-sm);color:var(--text-bright);font-size:var(--font-size-sm);">${t("Model Usage", "Penggunaan Model")}</h4>
+    <table class="analytics-table"><thead><tr><th>${t("Model", "Model")}</th><th>#</th></tr></thead><tbody>${modelRows}</tbody></table>
+    ` : ""}
   `;
 }
 
-//===========================================================================
-// CHAT MESSAGE & VIEW CLEAR UTILITIES
-//===========================================================================
+// ==========================================================================
+// HISTORY: localStorage Persistence
+// ==========================================================================
+
+function saveHistoryToStorage(feature, input, extra, results, historyId) {
+  try {
+    const history = JSON.parse(sessionStorage.getItem(HISTORY_KEY) || "[]");
+
+    history.push({
+      id: historyId || Date.now().toString(),
+      timestamp: new Date().toISOString(),
+      feature,
+      input: input.substring(0, 1000),
+      extra: (extra || "").substring(0, 500),
+      language: AppState.language,
+      modelIds: AppState.selectedModelIds,
+      results: Object.fromEntries(
+        Object.entries(results).map(([modelId, r]) => [
+          modelId,
+          {
+            response: (r.response || "").substring(0, 3000),
+            exec_time: r.exec_time || 0,
+            is_error: r.is_error || false,
+            error: r.error || null,
+            label: r.label || "",
+            icon: r.icon || "",
+            persona: r.persona || "",
+          },
+        ])
+      ),
+    });
+
+    // Keep only latest entries
+    if (history.length > MAX_HISTORY_ENTRIES) {
+      history.splice(0, history.length - MAX_HISTORY_ENTRIES);
+    }
+
+    sessionStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch (e) {
+    console.warn("[StructCode] Failed to save history:", e);
+  }
+}
+
+function restoreHistoryFromStorage() {
+  try {
+    const history = JSON.parse(sessionStorage.getItem(HISTORY_KEY) || "[]");
+    if (history.length === 0) return;
+
+    // Restore General Chat messages
+    const generalEntries = history.filter((h) => h.feature === FEATURES.GENERAL);
+    if (generalEntries.length > 0 && DOM.chatGeneral) {
+      const emptyState = DOM.chatGeneral.querySelector(".empty-state");
+      if (emptyState) emptyState.remove();
+
+      generalEntries.forEach((entry) => {
+        // User message
+        addChatMessage(FEATURES.GENERAL, "user", escapeHtml(entry.input));
+
+        // Bot response(s)
+        const modelIds = Object.keys(entry.results || {});
+        if (modelIds.length === 1) {
+          const r = entry.results[modelIds[0]];
+          if (!r.is_error) {
+            renderSingleGeneralResponse(r, modelIds[0], entry.input);
+          }
+        } else if (modelIds.length > 1) {
+          renderGeneralMultiResponse(entry.results, entry.input);
+        }
+      });
+    }
+
+    // Restore last result for split panel features
+    [FEATURES.FROM_CODE, FEATURES.EXPLAIN, FEATURES.HELP_FIX, FEATURES.HELP_WRITE].forEach((feat) => {
+      const entries = history.filter((h) => h.feature === feat);
+      if (entries.length === 0) return;
+
+      const lastEntry = entries[entries.length - 1];
+      AppState.currentResults[feat] = {
+        input: lastEntry.input,
+        extra: lastEntry.extra,
+        results: lastEntry.results,
+        historyId: lastEntry.id,
+        timestamp: lastEntry.timestamp,
+      };
+
+      // Restore input fields
+      restoreInputFields(feat, lastEntry);
+
+      // Render last output
+      const outputId = `output-${feat}`;
+      const out = document.getElementById(outputId);
+      if (!out) return;
+
+      const modelIds = Object.keys(lastEntry.results || {});
+      if (modelIds.length === 0) return;
+
+      if (modelIds.length === 1) {
+        const modelId = modelIds[0];
+        const r = lastEntry.results[modelId];
+        if (r && !r.is_error) {
+          const wrapper = document.createElement("div");
+          wrapper.appendChild(createModelResponseCard(r, modelId, feat, lastEntry.extra || lastEntry.input));
+          out.innerHTML = "";
+          out.appendChild(wrapper);
+        }
+      } else {
+        const gridClass = modelIds.length === 2 ? "two-models" : "three-models";
+        const grid = document.createElement("div");
+        grid.className = `comparison-grid ${gridClass}`;
+        modelIds.forEach((modelId) => {
+          const r = lastEntry.results[modelId];
+          if (r) grid.appendChild(createModelResponseCard(r, modelId, feat, lastEntry.extra || lastEntry.input));
+        });
+        out.innerHTML = "";
+        out.appendChild(grid);
+      }
+    });
+
+    console.info(`[StructCode] Restored ${history.length} history entries from sessionStorage`);
+  } catch (e) {
+    console.warn("[StructCode] Failed to restore history:", e);
+  }
+}
+
+function restoreInputFields(feature, entry) {
+  switch (feature) {
+    case FEATURES.FROM_CODE:
+      if (DOM.codeFromCode && entry.extra) { DOM.codeFromCode.value = entry.extra; DOM.codeFromCode.dispatchEvent(new Event("input")); }
+      if (DOM.qFromCode && entry.input) DOM.qFromCode.value = entry.input;
+      break;
+    case FEATURES.EXPLAIN:
+      if (DOM.codeExplain && entry.extra) { DOM.codeExplain.value = entry.extra; DOM.codeExplain.dispatchEvent(new Event("input")); }
+      break;
+    case FEATURES.HELP_FIX:
+      if (DOM.codeHelpFix && entry.extra) { DOM.codeHelpFix.value = entry.extra; DOM.codeHelpFix.dispatchEvent(new Event("input")); }
+      if (DOM.intentHelpFix && entry.input) DOM.intentHelpFix.value = entry.input;
+      break;
+    case FEATURES.HELP_WRITE:
+      if (DOM.inputHelpWrite && entry.input) DOM.inputHelpWrite.value = entry.input;
+      break;
+  }
+}
+
+// ==========================================================================
+// HISTORY: Background Sync to MongoDB
+// ==========================================================================
+
+async function syncHistoryToServer(feature, input, extra, results, historyId) {
+  try {
+    await fetch("/api/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        history_id: historyId,
+        feature,
+        input: input.substring(0, 1000),
+        extra_context_preview: (extra || "").substring(0, 300),
+        language: AppState.language,
+        results: Object.fromEntries(
+          Object.entries(results).map(([modelId, r]) => [
+            modelId,
+            {
+              response_preview: (r.response || "").substring(0, 500),
+              exec_time: r.exec_time || 0,
+              is_error: r.is_error || false,
+            },
+          ])
+        ),
+        timestamp: new Date().toISOString(),
+      }),
+    });
+  } catch (e) {
+    console.warn("[StructCode] Background sync failed:", e);
+  }
+}
+
+// ==========================================================================
+// CHAT MESSAGE UTILITIES
+// ==========================================================================
 
 function addChatMessage(viewId, role, htmlContent) {
   const chatBox = document.getElementById(`chat-${viewId}`);
@@ -1588,58 +1865,67 @@ function addErrorMessage(viewId, errorText) {
   return addChatMessage(viewId, "bot", `<div class="error-message">⚠ ${escapeHtml(errorText)}</div>`);
 }
 
-function clearChat(viewId) {
-  const box = document.getElementById(`chat-${viewId}`);
-  if (box) {
-    const txt = AppState.language === "id" ? "Chat dibersihkan. Ajukan pertanyaan baru." : "Chat cleared. Ask a new question.";
-    box.innerHTML = `<div class="empty-state"><p>${txt}</p></div>`;
-  }
-  AppState.followUpIndex = 0;
-}
-
 function clearView(feature) {
+  // Clear history for this feature
+  delete AppState.currentResults[feature];
+
   if (feature === FEATURES.GENERAL) {
-    clearChat(FEATURES.GENERAL);
+    const box = DOM.chatGeneral;
+    if (box) {
+      box.innerHTML = `<div class="empty-state"><span class="empty-state-icon">🤖</span><p>${t("Chat cleared.", "Chat dibersihkan.")}</p></div>`;
+    }
+    AppState.followUpIndex = 0;
+
+    // Remove general entries from sessionStorage
+    try {
+      const history = JSON.parse(sessionStorage.getItem(HISTORY_KEY) || "[]");
+      const filtered = history.filter((h) => h.feature !== feature);
+      sessionStorage.setItem(HISTORY_KEY, JSON.stringify(filtered));
+
+      // Clear feedback terkait feature
+      Object.keys(AppState.givenFeedback).forEach((key) => {
+        if (key.startsWith(`${feature}::`)) {
+          delete AppState.givenFeedback[key];
+        }
+      });
+      sessionStorage.setItem(FEEDBACK_KEY, JSON.stringify(AppState.givenFeedback));
+    } catch (e) { /* ignore */ }
     return;
   }
+
   const clearMap = {
-    [FEATURES.FROM_CODE]:  { ta: [DOM.codeFromCode, DOM.qFromCode], out: "output-from_code" },
-    [FEATURES.EXPLAIN]:    { ta: [DOM.codeExplain], out: "output-explain" },
-    [FEATURES.HELP_FIX]:   { ta: [DOM.codeHelpFix, DOM.intentHelpFix], out: "output-help_fix" },
+    [FEATURES.FROM_CODE]: { ta: [DOM.codeFromCode, DOM.qFromCode], out: "output-from_code" },
+    [FEATURES.EXPLAIN]: { ta: [DOM.codeExplain], out: "output-explain" },
+    [FEATURES.HELP_FIX]: { ta: [DOM.codeHelpFix, DOM.intentHelpFix], out: "output-help_fix" },
     [FEATURES.HELP_WRITE]: { ta: [DOM.inputHelpWrite], out: "output-help_write" },
   };
 
   const config = clearMap[feature];
   if (!config) return;
 
-  config.ta.forEach((t) => {
-    if (t) {
-      t.value = "";
-      t.dispatchEvent(new Event("input"));
-    }
+  config.ta.forEach((el) => {
+    if (el) { el.value = ""; el.dispatchEvent(new Event("input")); }
   });
 
   const out = document.getElementById(config.out);
-  if (out) {
-    const txt = AppState.language === "id" ? "Dibersihkan. Siap untuk pertanyaan baru." : "Cleared. Ready for a new query.";
-    out.innerHTML = `<div class="empty-state"><p>${txt}</p></div>`;
-  }
+  if (out) out.innerHTML = `<div class="empty-state"><p>${t("Cleared.", "Dibersihkan.")}</p></div>`;
+
+  // Remove from sessionStorage
+  try {
+    const history = JSON.parse(sessionStorage.getItem(HISTORY_KEY) || "[]");
+    const filtered = history.filter((h) => h.feature !== feature);
+    sessionStorage.setItem(HISTORY_KEY, JSON.stringify(filtered));
+  } catch (e) { /* ignore */ }
 }
 
-function shakeElement(el) {
-  if (!el) return;
-  el.classList.remove("shake");
-  void el.offsetWidth;
-  el.classList.add("shake");
-  setTimeout(() => el.classList.remove("shake"), 500);
-}
-
-//===========================================================================
-// PARSING & TEXT FORMATTING UTILS
-//===========================================================================
+// ==========================================================================
+// PARSING & TEXT FORMATTING UTILITIES
+// ==========================================================================
 
 function extractSection(text, key, stopKeys = []) {
-  const stopPattern = stopKeys.length > 0 ? `(?=${stopKeys.map(k => `${k}:|${k}\\|\\|\\|`).join("|")}|$)` : "(?=$)";
+  const stopPattern = stopKeys.length > 0
+    ? `(?=${stopKeys.map((k) => `${k}:|${k}\\|\\|\\|`).join("|")}|$)`
+    : "(?=$)";
   const regex = new RegExp(`${key}:\\s*([\\s\\S]*?)${stopPattern}`, "i");
   return text.match(regex)?.[1]?.trim() || "";
 }
@@ -1651,20 +1937,22 @@ function extractLine(text, key) {
 function formatText(text) {
   if (!text) return "";
   let html = escapeHtml(text);
-  
-  // 1. Convert <kw> tags back into clickable buttons
-  // Setelah di-escape oleh escapeHtml, <kw> berubah menjadi &lt;kw&gt;
-  html = html.replace(/&lt;kw&gt;([\s\S]*?)&lt;\/kw&gt;/g, "<button class='inline-keyword' onclick='openInlinePopup(\"$1\", this)'>$1</button>");
-  
-  // 2. Code blocks & inline code
+
+  // Convert escaped <kw> tags back to clickable buttons
+  html = html.replace(
+    /&lt;kw&gt;([\s\S]*?)&lt;\/kw&gt;/g,
+    "<button class='inline-keyword' onclick='openInlinePopup(\"$1\", this)'>$1</button>"
+  );
+
+  // Code blocks & inline code
   html = html.replace(/```([\s\S]*?)```/g, "<pre><code>$1</code></pre>");
   html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-  
-  // 3. Typography
+
+  // Typography
   html = html.replace(/\*\*([\s\S]*?)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/\*([^*\n]+?)\*/g, "<em>$1</em>");
   html = html.replace(/\n/g, "<br>");
-  
+
   return html;
 }
 
@@ -1677,138 +1965,41 @@ function escapeHtml(str) {
 
 function cleanChipText(text) {
   if (!text) return "";
-  return text.replace(/<\/?kw>/g, '');
+  return text.replace(/<\/?kw>/g, "").replace(/<[^>]+>/g, "");
 }
 
-function initBurgerMenu() {
-  const burgerBtn = document.getElementById("btn-burger");
-  const sidebar = document.querySelector(".sidebar");
-  const overlay = document.getElementById("sidebar-overlay");
-
-  if(!burgerBtn || !sidebar || !overlay) return;
-
-  burgerBtn.addEventListener("click", () => {
-    sidebar.classList.add("open");
-    overlay.classList.remove("hidden");
-  });
-  overlay.addEventListener("click", () => {
-    sidebar.classList.remove("open");
-    overlay.classList.add("hidden");
-  });
+function getModelInfo(modelId) {
+  const model = AppState.availableModels.find((m) => m.id === modelId);
+  return model || { label: modelId, icon: "🤖", persona: "", expertise_tags: [] };
 }
 
-function openModelSettings() {
-  document.getElementById("model-modal").classList.remove("hidden");
-  document.getElementById("select-provider").value = AppState.provider;
-  updateModelDropdowns();
-  document.getElementById("select-model").value = AppState.model;
-}
+// ==========================================================================
+// EXPOSE GLOBAL FUNCTIONS (called from HTML onclick)
+// ==========================================================================
 
-function updateModelDropdowns() {
-  const prov = document.getElementById("select-provider").value;
-  const modelSelect = document.getElementById("select-model");
-  modelSelect.innerHTML = "";
-  
-  AI_MODELS[prov].forEach(m => {
-    const opt = document.createElement("option");
-    opt.value = m.id; opt.textContent = `${m.name} - ${m.expert}`;
-    modelSelect.appendChild(opt);
-  });
-}
-
-function saveModelSettings() {
-  AppState.provider = document.getElementById("select-provider").value;
-  AppState.model = document.getElementById("select-model").value;
-  localStorage.setItem("sc_provider", AppState.provider);
-  localStorage.setItem("sc_model", AppState.model);
-  
-  updateProviderBadgeUI();
-  document.getElementById("model-modal").classList.add("hidden");
-  showToast("Model AI berhasil diperbarui", "success");
-}
-
-function updateProviderBadgeUI() {
-  const badge = document.getElementById("display-active-model");
-  if(badge) {
-    const modelObj = AI_MODELS[AppState.provider].find(m => m.id === AppState.model);
-    badge.textContent = modelObj ? modelObj.name : AppState.model;
-  }
-}
-
-// FUNGSI HIDE/SHOW MODEL BATTLE
-function toggleHideModel(btn, bodyId) {
-  const body = document.getElementById(bodyId);
-  if(body.classList.contains("hidden-content")) {
-    body.classList.remove("hidden-content");
-    btn.textContent = "➖ Sembunyikan";
-  } else {
-    body.classList.add("hidden-content");
-    btn.textContent = "➕ Tampilkan";
-  }
-}
-
-// 1. FUNGSI DRAWER BATTLE SLIDE
-function toggleBattleDrawer() {
-  const drawer = document.getElementById("battle-drawer");
-  const btn = document.getElementById("btn-slide-battle");
-  if (drawer.classList.contains("open")) {
-    drawer.classList.remove("open");
-    btn.classList.remove("hide-btn");
-  } else {
-    drawer.classList.add("open");
-    btn.classList.add("hide-btn");
-  }
-}
-
-// 2. FUNGSI PENGATURAN MODEL AGAR TOMBOL SIMPAN BERFUNGSI
-function openModelSettings() {
-  document.getElementById("model-modal").classList.remove("hidden");
-  document.getElementById("select-provider").value = AppState.provider;
-  updateModelDropdowns(); // Isi opsi dropdown
-  // Paksa select HTML untuk memilih model yang tersimpan di state
-  setTimeout(() => { document.getElementById("select-model").value = AppState.model; }, 50);
-}
-
-function updateModelDropdowns() {
-  const prov = document.getElementById("select-provider").value;
-  const modelSelect = document.getElementById("select-model");
-  modelSelect.innerHTML = ""; // Bersihkan opsi lama
-  
-  if(AI_MODELS[prov]) {
-    AI_MODELS[prov].forEach(m => {
-      const opt = document.createElement("option");
-      opt.value = m.id; 
-      opt.textContent = `${m.name} - ${m.expert}`;
-      modelSelect.appendChild(opt);
-    });
-  }
-}
-
-function saveModelSettings() {
-  const prov = document.getElementById("select-provider").value;
-  const mod = document.getElementById("select-model").value;
-  
-  if (!prov || !mod) {
-    showToast("Gagal menyimpan, pastikan model dipilih", "error");
-    return;
-  }
-
-  AppState.provider = prov;
-  AppState.model = mod;
-  
-  // Simpan ke LocalStorage agar permanen
-  localStorage.setItem("sc_provider", prov);
-  localStorage.setItem("sc_model", mod);
-  
-  updateProviderBadgeUI();
-  document.getElementById("model-modal").classList.add("hidden");
-  showToast("Model AI berhasil diperbarui", "success");
-}
-
-function updateProviderBadgeUI() {
-  const badge = document.getElementById("display-active-model");
-  if(badge && AI_MODELS[AppState.provider]) {
-    const modelObj = AI_MODELS[AppState.provider].find(m => m.id === AppState.model);
-    badge.textContent = modelObj ? modelObj.name : AppState.model;
-  }
-}
+window.submitGeneral = submitGeneral;
+window.submitFollowUp = submitFollowUp;
+window.submitFromCode = submitFromCode;
+window.submitExplain = submitExplain;
+window.submitHelpFix = submitHelpFix;
+window.submitHelpWrite = submitHelpWrite;
+window.clearView = clearView;
+window.switchView = switchView;
+window.toggleLanguage = toggleLanguage;
+window.dismissDisclaimer = dismissDisclaimer;
+window.toggleModelDropdown = toggleModelDropdown;
+window.toggleModelSelection = toggleModelSelection;
+window.toggleMobileMoreMenu = toggleMobileMoreMenu;
+window.openInlinePopup = openInlinePopup;
+window.closeInlinePopup = closeInlinePopup;
+window.popupAskFollowUp = popupAskFollowUp;
+window.openRatingModal = openRatingModal;
+window.selectRating = selectRating;
+window.submitRating = submitRating;
+window.closeRatingModal = closeRatingModal;
+window.openSurveyModal = openSurveyModal;
+window.submitSurvey = submitSurvey;
+window.closeSurveyModal = closeSurveyModal;
+window.loadAnalytics = loadAnalytics;
+window.handleLogout = handleLogout;
+window.fillAndSubmitFollowUp = submitFollowUp;

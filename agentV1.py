@@ -1,15 +1,16 @@
 """
-agentV1.py - StructCode Agent (Bilingual + Inline Keywords Version)
-=====================================================================
-LLM-powered pedagogical coding assistant with guardrails.
-
+agentV1.py - StructCode Agent (Multi-Model + OpenRouter Version)
+================================================================
 Updates:
-- Inline Keyword Wrapping: Memaksa AI membungkus kata kunci dengan <kw>...</kw>
-- Strict Bilingual Support: Memaksa penjelasan bahasa Indonesia tanpa merusak format struktur output.
+- OpenRouterProvider: Provider baru via OpenRouter API
+- MODEL_REGISTRY: 6 model free yang relevan untuk tutor algoritma
+- StructCodeAgent.ask_multi(): Parallel multi-model execution
+- Execution time tracking per model
 """
 import os
 import time
 import logging
+import concurrent.futures
 from abc import ABC, abstractmethod
 from typing import Optional
 from dotenv import load_dotenv
@@ -32,6 +33,81 @@ logging.basicConfig(
 logger = logging.getLogger("agentV1")
 
 # ---------------------------------------------------------------------------
+# Model Registry (6 Free Models Relevan untuk Tutor Algoritma)
+# ---------------------------------------------------------------------------
+MODEL_REGISTRY = {
+    "google/gemini-2.5-flash": {
+        "label": "Gemini Flash",
+        "provider_type": "gemini",
+        "api_model_name": "gemini-2.5-flash",   # ← NEW: nama untuk SDK
+        "persona": "Tutor Algoritma Umum",
+        "expertise_tags": ["Algoritma Umum", "Pseudocode", "Penjelasan Konsep"],
+        "icon": "⚡",
+        "context_length": "1M",
+        "is_free": True,
+        "description": "Model default StructCode. Cepat, akurat, dan konsisten dalam format pedagogis.",
+    },
+    "meta-llama/llama-3.3-70b-instruct:free": {
+        "label": "Llama 3.3 70B",
+        "provider_type": "openrouter",
+        "api_model_name": "meta-llama/llama-3.3-70b-instruct:free",
+        "persona": "Ahli Logika & Struktur Data",
+        "expertise_tags": ["Struktur Data", "Logika Pemrograman", "Analisis Algoritma"],
+        "icon": "🦙",
+        "context_length": "66K",
+        "is_free": True,
+        "description": "Model 70B dari Meta. Sangat kuat dalam penalaran logika dan analisis struktur data.",
+    },
+    "qwen/qwen3-coder:free": {
+        "label": "Qwen3 Coder",
+        "provider_type": "openrouter",
+        "api_model_name": "qwen/qwen3-coder:free",   # ← FIXED
+        "persona": "Ahli Pseudocode & Implementasi",
+        "expertise_tags": ["Pseudocode", "Implementasi Kode", "Optimasi Algoritma"],
+        "icon": "🐉",
+        "context_length": "262K",
+        "is_free": True,
+        "description": "Model spesialis kode dari Qwen. Unggul dalam pseudocode dan analisis implementasi.",
+    },
+    "google/gemma-4-31b-it:free": {
+        "label": "Gemma 4 31B",
+        "provider_type": "openrouter",
+        "api_model_name": "google/gemma-4-31b-it:free",   # ← FIXED (was gemma-3-27b)
+        "persona": "Ahli Matematika Diskrit & Kompleksitas",
+        "expertise_tags": ["Kompleksitas Algoritma", "Matematika Diskrit", "Big-O Analysis"],
+        "icon": "💎",
+        "context_length": "256K",
+        "is_free": True,
+        "description": "Model terbaru Google open-source. Ahli dalam analisis kompleksitas dan matematika diskrit.",
+    },
+    "openai/gpt-oss-120b:free": {
+        "label": "GPT-OSS 120B",
+        "provider_type": "openrouter",
+        "api_model_name": "openai/gpt-oss-120b:free",
+        "persona": "Ahli Pemecahan Masalah Komputasional",
+        "expertise_tags": ["Problem Solving", "Algoritma Lanjutan", "Reasoning"],
+        "icon": "🧠",
+        "context_length": "131K",
+        "is_free": True,
+        "description": "Model open-weight 120B dari OpenAI. Unggul dalam problem solving dan reasoning mendalam.",
+    },
+    "nousresearch/hermes-3-llama-3.1-405b:free": {
+        "label": "Hermes 3 405B",
+        "provider_type": "openrouter",
+        "api_model_name": "nousresearch/hermes-3-llama-3.1-405b:free",   # ← FIXED
+        "persona": "Ahli Penalaran Algoritmik",
+        "expertise_tags": ["Penalaran Multi-step", "Algoritma Rekursif", "Dynamic Programming"],
+        "icon": "🏛️",
+        "context_length": "131K",
+        "is_free": True,
+        "description": "Model 405B fine-tuned untuk instruksi. Sangat patuh format dan ahli dalam penalaran multi-step.",
+    },
+}
+
+# Default model saat pertama load
+DEFAULT_MODEL_ID = "google/gemini-2.5-flash"
+
+# ---------------------------------------------------------------------------
 # Abstract LLM Provider
 # ---------------------------------------------------------------------------
 class LLMProvider(ABC):
@@ -42,7 +118,6 @@ class LLMProvider(ABC):
         user_prompt: str,
         temperature: float = 0.15,
         max_tokens: int = 4096,
-        model_id: Optional[str] = None  # TAMBAHAN
     ) -> str:
         pass
 
@@ -64,7 +139,10 @@ class GeminiProvider(LLMProvider):
         try:
             import google.generativeai as genai
         except ImportError:
-            raise ImportError("google-generativeai not installed.")
+            raise ImportError(
+                "google-generativeai not installed. "
+                "Run: pip install google-generativeai"
+            )
         genai.configure(api_key=api_key)
         self._model_name = model
         self._genai = genai
@@ -83,18 +161,29 @@ class GeminiProvider(LLMProvider):
         )
 
     def generate(
-        self, system_prompt: str, user_prompt: str, 
-        temperature: float = 0.15, max_tokens: int = 4096,
-        model_id: Optional[str] = None
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.15,
+        max_tokens: int = 4096,
     ) -> str:
+        if temperature != self._temperature or max_tokens != self._max_tokens:
+            self._temperature = temperature
+            self._max_tokens = max_tokens
+            self._init_model()
+
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
         response = self._model.generate_content(full_prompt)
         return response.text
 
     @property
-    def provider_name(self) -> str: return "Gemini"
+    def provider_name(self) -> str:
+        return "Gemini"
+
     @property
-    def model_name(self) -> str: return self._model_name
+    def model_name(self) -> str:
+        return self._model_name
+
 
 # ---------------------------------------------------------------------------
 # OpenAI Provider
@@ -104,67 +193,143 @@ class OpenAIProvider(LLMProvider):
         try:
             from openai import OpenAI
         except ImportError:
-            raise ImportError("openai not installed.")
+            raise ImportError(
+                "openai not installed. Run: pip install openai"
+            )
         self._client = OpenAI(api_key=api_key)
         self._model_name = model
 
     def generate(
-        self, system_prompt: str, user_prompt: str, 
-        temperature: float = 0.15, max_tokens: int = 4096,
-        model_id: Optional[str] = None
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.15,
+        max_tokens: int = 4096,
     ) -> str:
-        target_model = model_id if model_id else self._model_name
         response = self._client.chat.completions.create(
-            model=target_model,
+            model=self._model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=temperature, max_tokens=max_tokens, top_p=0.95,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=0.95,
         )
         return response.choices[0].message.content
 
     @property
-    def provider_name(self) -> str: return "OpenAI"
+    def provider_name(self) -> str:
+        return "OpenAI"
+
     @property
-    def model_name(self) -> str: return self._model_name
+    def model_name(self) -> str:
+        return self._model_name
+
 
 # ---------------------------------------------------------------------------
-# OpenRouter Provider (BARU)
+# OpenRouter Provider
+# (Inherit OpenAIProvider karena format API sama persis,
+#  hanya beda base_url, api_key, dan extra headers)
 # ---------------------------------------------------------------------------
 class OpenRouterProvider(LLMProvider):
+    """
+    Provider untuk OpenRouter.ai
+    Menggunakan OpenAI-compatible API dengan base_url berbeda.
+    Mendukung semua model free yang tersedia di OpenRouter.
+    """
+
+    OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
     def __init__(self, api_key: str, model: str):
         try:
             from openai import OpenAI
         except ImportError:
-            raise ImportError("openai not installed.")
-        # Menggunakan format OpenAI tapi diarahkan ke API OpenRouter
-        self._client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+            raise ImportError(
+                "openai not installed. Run: pip install openai"
+            )
+
+        self._client = OpenAI(
+            api_key=api_key,
+            base_url=self.OPENROUTER_BASE_URL,
+            default_headers={
+                # Header wajib OpenRouter
+                "HTTP-Referer": "https://structcode.app",
+                "X-Title": "StructCode - Algorithm Tutor",
+            },
+        )
         self._model_name = model
+        self._api_key = api_key
 
     def generate(
-        self, system_prompt: str, user_prompt: str, 
-        temperature: float = 0.15, max_tokens: int = 4096,
-        model_id: Optional[str] = None
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.15,
+        max_tokens: int = 4096,
     ) -> str:
-        target_model = model_id if model_id else self._model_name
         response = self._client.chat.completions.create(
-            model=target_model,
+            model=self._model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=temperature, max_tokens=max_tokens, top_p=0.95,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=0.95,
         )
         return response.choices[0].message.content
 
     @property
-    def provider_name(self) -> str: return "OpenRouter"
+    def provider_name(self) -> str:
+        return "OpenRouter"
+
     @property
-    def model_name(self) -> str: return self._model_name
+    def model_name(self) -> str:
+        return self._model_name
+
 
 # ---------------------------------------------------------------------------
-# Prompt Templates (Updated for <kw> tags and strict formatting)
+# Provider Factory
+# Membuat provider yang tepat berdasarkan model_id dari MODEL_REGISTRY
+# ---------------------------------------------------------------------------
+class ProviderFactory:
+    @staticmethod
+    def create(model_id: str) -> LLMProvider:
+        if model_id not in MODEL_REGISTRY:
+            raise ValueError(
+                f"Model '{model_id}' tidak ada di MODEL_REGISTRY. "
+                f"Model tersedia: {list(MODEL_REGISTRY.keys())}"
+            )
+
+        model_info = MODEL_REGISTRY[model_id]
+        provider_type = model_info["provider_type"]
+        api_model_name = model_info["api_model_name"]   # ← Gunakan ini, bukan model_id
+
+        if provider_type == "gemini":
+            api_key = os.getenv("GEMINI_API_KEY", "")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY tidak ditemukan di .env")
+            return GeminiProvider(api_key=api_key, model=api_model_name)   # ← FIXED
+
+        elif provider_type == "openrouter":
+            api_key = os.getenv("OPENROUTER_API_KEY", "")
+            if not api_key:
+                raise ValueError("OPENROUTER_API_KEY tidak ditemukan di .env")
+            return OpenRouterProvider(api_key=api_key, model=api_model_name)   # ← FIXED
+
+        elif provider_type == "openai":
+            api_key = os.getenv("OPENAI_API_KEY", "")
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY tidak ditemukan di .env")
+            return OpenAIProvider(api_key=api_key, model=api_model_name)   # ← FIXED
+
+        else:
+            raise ValueError(f"provider_type '{provider_type}' tidak dikenali.")
+
+# ---------------------------------------------------------------------------
+# Prompt Templates
+# (Sama dengan sebelumnya, tidak berubah)
 # ---------------------------------------------------------------------------
 class PromptTemplates:
     SYSTEM_IDENTITY = """You are StructCode, an algorithm and pseudocode tutor for university students.
@@ -296,45 +461,92 @@ RELATED|||<One related concept string (do NOT use kw tags for this)>"""
 
 
 # ---------------------------------------------------------------------------
-# StructCode Agent
+# Single Model Result Container
 # ---------------------------------------------------------------------------
+class ModelResult:
+    """Container untuk hasil dari satu model."""
 
+    def __init__(
+        self,
+        model_id: str,
+        response: str = "",
+        exec_time: float = 0.0,
+        error: Optional[str] = None,
+    ):
+        self.model_id = model_id
+        self.response = response
+        self.exec_time = exec_time
+        self.error = error
+        self.model_info = MODEL_REGISTRY.get(model_id, {})
+
+    def to_dict(self) -> dict:
+        return {
+            "model_id": self.model_id,
+            "label": self.model_info.get("label", self.model_id),
+            "persona": self.model_info.get("persona", ""),
+            "icon": self.model_info.get("icon", "🤖"),
+            "expertise_tags": self.model_info.get("expertise_tags", []),
+            "response": self.response,
+            "exec_time": round(self.exec_time, 2),
+            "error": self.error,
+            "is_error": self.error is not None,
+        }
+
+
+# ---------------------------------------------------------------------------
+# StructCode Agent (Multi-Model)
+# ---------------------------------------------------------------------------
 class StructCodeAgent:
     VALID_FEATURES = {
-        "general", "from_code", "explain", "help_fix", "help_write",
+        "general",
+        "from_code",
+        "explain",
+        "help_fix",
+        "help_write",
     }
 
-    def __init__(self) -> None:
-        # Inisialisasi default saat aplikasi baru nyala
-        self._provider = self._get_dynamic_provider("openrouter", "meta-llama/llama-3.3-70b-instruct:free")
-        logger.info("StructCodeAgent initialized")
+    # Cache provider instances agar tidak re-init setiap request
+    _provider_cache: dict[str, LLMProvider] = {}
 
-    def _get_dynamic_provider(self, provider_name: str, model_name: str) -> LLMProvider:
-        """Membuat instance API secara dinamis berdasarkan pilihan user"""
-        provider_name = provider_name.lower().strip()
-        
-        if provider_name == "openrouter":
-            api_key = os.getenv("OPENROUTER_API_KEY", "")
-            if not api_key: raise ValueError("OPENROUTER_API_KEY missing in .env")
-            return OpenRouterProvider(api_key=api_key, model=model_name)
-            
-        elif provider_name == "openai":
-            api_key = os.getenv("OPENAI_API_KEY", "")
-            if not api_key: raise ValueError("OPENAI_API_KEY missing in .env")
-            return OpenAIProvider(api_key=api_key, model=model_name)
-            
-        else:
-            api_key = os.getenv("GEMINI_API_KEY", "")
-            if not api_key: raise ValueError("GEMINI_API_KEY missing in .env")
-            return GeminiProvider(api_key=api_key, model=model_name)
+    def __init__(self) -> None:
+        # Init default provider (Gemini) saat startup
+        self._default_model_id = DEFAULT_MODEL_ID
+        self._default_provider = self._get_or_create_provider(DEFAULT_MODEL_ID)
+        logger.info(
+            "StructCodeAgent initialized | default_model=%s",
+            self._default_model_id,
+        )
+
+    def _get_or_create_provider(self, model_id: str) -> LLMProvider:
+        """
+        Ambil provider dari cache atau buat baru.
+        Cache mencegah re-inisialisasi berulang untuk model yang sama.
+        """
+        if model_id not in self._provider_cache:
+            try:
+                provider = ProviderFactory.create(model_id)
+                self._provider_cache[model_id] = provider
+                logger.info(
+                    "Provider created | model=%s | type=%s",
+                    model_id,
+                    MODEL_REGISTRY.get(model_id, {}).get("provider_type", "unknown"),
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to create provider for model=%s | error=%s",
+                    model_id,
+                    str(exc),
+                )
+                raise
+        return self._provider_cache[model_id]
 
     @property
     def provider_name(self) -> str:
-        return self._provider.provider_name
+        return self._default_provider.provider_name
 
     @property
     def model_name(self) -> str:
-        return self._provider.model_name
+        return self._default_provider.model_name
 
     def _get_system_prompt(self, feature: str) -> str:
         routing = {
@@ -347,64 +559,272 @@ class StructCodeAgent:
         factory = routing.get(feature, PromptTemplates.general_question)
         return factory()
 
+    def _build_language_instruction(self, language: str) -> str:
+        """Build instruksi bahasa yang ditambahkan ke system prompt."""
+        if language == "id":
+            return (
+                "\n\nCRITICAL BILINGUAL INSTRUCTION:\n"
+                "You MUST translate and write ALL explanations, analogies, hints, and definitions strictly in Indonesian (Bahasa Indonesia). "
+                "HOWEVER, you MUST keep the structural prefix words (ANSWER:, FOLLOWUP1:, RESPONSE:, LINE|||, SUMMARY|||, SUGGESTION|||, BUGGY_LINES|||, TASK|||) exactly as they are in English! "
+                "Remember to wrap important algorithmic concepts and syntax inside <kw> and </kw> tags within your Indonesian explanation."
+            )
+        else:
+            return (
+                "\n\nCRITICAL INSTRUCTION:\n"
+                "Write all explanations in standard English. Remember to wrap important algorithmic concepts and syntax inside <kw> and </kw> tags within your explanation."
+            )
+
+    def _build_user_prompt(
+        self,
+        user_input: str,
+        extra_context: str = "",
+    ) -> str:
+        """Build user prompt dari input dan context."""
+        parts = []
+        if extra_context:
+            parts.append(f"Pseudocode / Context:\n{extra_context}")
+        parts.append(f"Student: {user_input}\n\nResponse:")
+        return "\n\n".join(parts)
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=5, max=30),
         retry=retry_if_exception_type(Exception),
         reraise=True,
     )
-    def _generate_with_retry(self, dynamic_provider: LLMProvider, system_prompt: str, user_prompt: str, model_id: str) -> str:
+    def _generate_with_retry(
+        self,
+        provider: LLMProvider,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        """Generate dengan retry logic dan rate limit handling."""
         try:
-            return dynamic_provider.generate(
+            return provider.generate(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 temperature=0.15,
                 max_tokens=4096,
-                model_id=model_id
             )
         except Exception as exc:
             err_str = str(exc)
-            if any(t in err_str.lower() for t in ["429", "quota", "rate limit"]):
-                logger.warning("Rate limit hit: %s", err_str[:120])
+            if any(t in err_str.lower() for t in ["429", "quota", "rate limit", "rate_limit"]):
+                logger.warning(
+                    "Rate limit hit for model=%s — backing off: %s",
+                    provider.model_name,
+                    err_str[:120],
+                )
                 time.sleep(2)
             raise
 
-    def ask(self, feature: str, user_input: str, extra_context: str = "", language: str = "en", provider: str = "openrouter", model_id: str = "meta-llama/llama-3.3-70b-instruct:free") -> str:
-        if feature not in self.VALID_FEATURES: feature = "general"
-        system_prompt = self._get_system_prompt(feature)
-        
-        # BILINGUAL STRICT PROMPT
-        if language == "id":
-            system_prompt += "\n\nCRITICAL BILINGUAL INSTRUCTION:\nYou MUST translate and write ALL explanations strictly in Indonesian. Wrap important concepts in <kw> and </kw> tags. Keep prefixes like ANSWER:, RESPONSE: in English."
-        else:
-            system_prompt += "\n\nCRITICAL INSTRUCTION:\nWrite all explanations in standard English. Wrap important algorithmic concepts in <kw> and </kw> tags."
+    def _run_single_model(
+        self,
+        model_id: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> ModelResult:
+        """
+        Jalankan satu model dan return ModelResult.
+        Dipakai sebagai target di ThreadPoolExecutor.
+        """
+        start_time = time.time()
+        try:
+            provider = self._get_or_create_provider(model_id)
+            response = self._generate_with_retry(provider, system_prompt, user_prompt)
+            exec_time = time.time() - start_time
 
-        user_prompt_parts = []
-        if extra_context: user_prompt_parts.append(f"Pseudocode / Context:\n{extra_context}")
-        user_prompt_parts.append(f"Student: {user_input}\n\nResponse:")
-        user_prompt = "\n\n".join(user_prompt_parts)
+            logger.info(
+                "Model completed | model=%s | exec_time=%.2fs",
+                model_id,
+                exec_time,
+            )
+            return ModelResult(
+                model_id=model_id,
+                response=response,
+                exec_time=exec_time,
+            )
+
+        except Exception as exc:
+            exec_time = time.time() - start_time
+            err_str = str(exc)
+
+            # Deteksi tipe error
+            if any(t in err_str.lower() for t in ["429", "quota", "rate limit", "rate_limit"]):
+                error_msg = "Rate limit exceeded. Please wait before retrying."
+            elif "timeout" in err_str.lower():
+                error_msg = "Request timed out. The model may be busy."
+            elif "api key" in err_str.lower() or "authentication" in err_str.lower():
+                error_msg = "API key error. Please check configuration."
+            else:
+                error_msg = err_str[:200]
+
+            logger.error(
+                "Model failed | model=%s | exec_time=%.2fs | error=%s",
+                model_id,
+                exec_time,
+                err_str[:200],
+            )
+            return ModelResult(
+                model_id=model_id,
+                exec_time=exec_time,
+                error=error_msg,
+            )
+
+    # ---------------------------------------------------------------------------
+    # Public Methods
+    # ---------------------------------------------------------------------------
+
+    def ask(
+        self,
+        feature: str,
+        user_input: str,
+        extra_context: str = "",
+        language: str = "en",
+        model_id: Optional[str] = None,
+    ) -> str:
+        """
+        Single model ask (backward compatible dengan appV1 lama).
+        Gunakan model_id jika ingin model spesifik,
+        default ke DEFAULT_MODEL_ID.
+        """
+        if feature not in self.VALID_FEATURES:
+            feature = "general"
+
+        target_model = model_id or self._default_model_id
+
+        system_prompt = self._get_system_prompt(feature)
+        system_prompt += self._build_language_instruction(language)
+        user_prompt = self._build_user_prompt(user_input, extra_context)
 
         try:
-            # Gunakan provider dari parameter
-            dyn_prov = self._get_dynamic_provider(provider, model_id)
-            result = self._generate_with_retry(dyn_prov, system_prompt, user_prompt, model_id)
-            return result
+            result = self._run_single_model(target_model, system_prompt, user_prompt)
+            logger.info(
+                "ask() completed | feature=%s | model=%s | lang=%s",
+                feature,
+                target_model,
+                language,
+            )
+            if result.error:
+                return f"ERROR|||{result.error}"
+            return result.response
+
         except Exception as exc:
             return self._handle_error(exc)
 
+    def ask_multi(
+        self,
+        feature: str,
+        user_input: str,
+        model_ids: list[str],
+        extra_context: str = "",
+        language: str = "en",
+        existing_model_ids: Optional[list[str]] = None,
+    ) -> dict[str, dict]:
+        """
+        Multi-model parallel ask.
+
+        Args:
+            feature: Fitur yang digunakan
+            user_input: Input dari student
+            model_ids: List model ID yang ingin dijalankan
+            extra_context: Pseudocode atau context tambahan
+            language: 'en' atau 'id'
+            existing_model_ids: Model yang sudah punya response
+                                 (tidak akan di-generate ulang)
+
+        Returns:
+            Dict { model_id: ModelResult.to_dict() }
+        """
+        if feature not in self.VALID_FEATURES:
+            feature = "general"
+
+        # Filter: hanya jalankan model yang belum ada hasilnya
+        existing = set(existing_model_ids or [])
+        models_to_run = [m for m in model_ids if m not in existing]
+
+        if not models_to_run:
+            logger.info("ask_multi: semua model sudah punya hasil, skip.")
+            return {}
+
+        # Validasi model IDs
+        invalid_models = [m for m in models_to_run if m not in MODEL_REGISTRY]
+        if invalid_models:
+            logger.warning("Model tidak dikenal diabaikan: %s", invalid_models)
+            models_to_run = [m for m in models_to_run if m in MODEL_REGISTRY]
+
+        if not models_to_run:
+            return {}
+
+        system_prompt = self._get_system_prompt(feature)
+        system_prompt += self._build_language_instruction(language)
+        user_prompt = self._build_user_prompt(user_input, extra_context)
+
+        results = {}
+
+        # Jalankan parallel menggunakan ThreadPoolExecutor
+        # max_workers=3 karena max model yang dipilih adalah 3
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_model = {
+                executor.submit(
+                    self._run_single_model,
+                    model_id,
+                    system_prompt,
+                    user_prompt,
+                ): model_id
+                for model_id in models_to_run
+            }
+
+            for future in concurrent.futures.as_completed(future_to_model):
+                model_id = future_to_model[future]
+                try:
+                    result = future.result()
+                    results[model_id] = result.to_dict()
+                except Exception as exc:
+                    logger.error(
+                        "Unexpected error in ask_multi | model=%s | error=%s",
+                        model_id,
+                        str(exc)[:200],
+                    )
+                    results[model_id] = ModelResult(
+                        model_id=model_id,
+                        error=str(exc)[:200],
+                    ).to_dict()
+
+        logger.info(
+            "ask_multi() completed | feature=%s | models_run=%s | lang=%s",
+            feature,
+            models_to_run,
+            language,
+        )
+        return results
+
     def explore(self, keyword: str, language: str = "en") -> str:
+        """Inline keyword exploration (single model, default Gemini)."""
         system_prompt = PromptTemplates.inline_explore()
+
         if language == "id":
-            system_prompt += "\n\nCRITICAL BILINGUAL INSTRUCTION:\nYou MUST write the DEF in Indonesian. Keep prefixes DEF|||, EXAMPLE|||, RELATED||| in English."
+            system_prompt += (
+                "\n\nCRITICAL BILINGUAL INSTRUCTION:\n"
+                "You MUST write the DEF in Indonesian (Bahasa Indonesia). "
+                "Keep prefixes DEF|||, EXAMPLE|||, RELATED||| in English. "
+                "Wrap concepts inside <kw>...</kw> tags inside your DEF sentence."
+            )
         else:
-            system_prompt += "\n\nCRITICAL INSTRUCTION:\nWrite the DEF in English."
+            system_prompt += (
+                "\n\nCRITICAL INSTRUCTION:\n"
+                "Write the DEF in English. Wrap concepts inside <kw>...</kw> tags inside your DEF sentence."
+            )
 
         user_prompt = f'Explain keyword for inline exploration: "{keyword}"'
 
         try:
-            # Explore pakai model default yang cepat
-            result = self._generate_with_retry(self._provider, system_prompt, user_prompt, self.model_name)
-            return result
+            result = self._run_single_model(
+                self._default_model_id, system_prompt, user_prompt
+            )
+            logger.info("explore() completed | keyword=%s", keyword)
+            if result.error:
+                return f"ERROR|||{result.error}"
+            return result.response
         except Exception as exc:
             return self._handle_error(exc)
 
@@ -413,5 +833,5 @@ class StructCodeAgent:
         err_str = str(exc)
         if any(t in err_str.lower() for t in ["429", "quota", "rate limit"]):
             return "ERROR|||Rate limit exceeded. Please wait 1 minute before trying again."
-        logger.error("LLM error: %s", err_str[:200])
+        logger.error("LLM generation error: %s", err_str[:200])
         return f"ERROR|||{err_str[:200]}"

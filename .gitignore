@@ -1,0 +1,44 @@
+# ===== ENVIRONMENT =====
+.env
+.env.local
+.env.*.local
+*.env
+
+# ===== PYTHON =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# ===== IDE & EDITORS =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ===== LOGS & TEMP =====
+*.log
+logs/
+tmp/
+temp/
+
+# ===== MONGODB LOCAL DATA =====
+data/
+*.db
+
+# ===== FLASK SESSIONS =====
+flask_session/
+instance/
+
+# ===== JUPYTER =====
+.ipynb_checkpoints
