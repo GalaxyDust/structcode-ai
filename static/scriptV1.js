@@ -384,6 +384,19 @@ function toggleModelSelection(modelId) {
       return;
     }
     AppState.selectedModelIds.push(modelId);
+        // Warn jika pilih banyak model lambat
+    const slowModels = ["nousresearch/hermes-3-llama-3.1-405b:free", "openai/gpt-oss-120b:free"];
+    const slowSelected = AppState.selectedModelIds.filter((m) => slowModels.includes(m)).length;
+    if (slowSelected >= 2) {
+      showToast(
+        t(
+          "⚠ Multiple large models selected. Responses may be slow (60s+).",
+          "⚠ Beberapa model besar dipilih. Respons mungkin lambat (60 detik+)."
+        ),
+        "warning",
+        5000
+      );
+    }
   }
 
   // Re-render both dropdowns
@@ -623,11 +636,9 @@ async function askMultiModel(feature, input, extra = "", isFollowUp = false) {
     ? existingResults.results || {}
     : {};
 
-  // Model yang sudah punya hasil (tidak perlu reload)
   const existingModelIds = Object.keys(existingForSameInput);
-
-  // Jika semua model sudah ada hasilnya, skip
   const newModels = modelIds.filter((m) => !existingModelIds.includes(m));
+
   if (newModels.length === 0 && existingModelIds.length > 0) {
     showToast(t("All selected models already have results.", "Semua model sudah memiliki hasil."), "info");
     return existingForSameInput;
@@ -649,13 +660,61 @@ async function askMultiModel(feature, input, extra = "", isFollowUp = false) {
       }),
     });
 
-    const data = await res.json();
+    // ===== ROBUST RESPONSE HANDLING =====
+    // Cek status code dulu
+    if (!res.ok) {
+      // Coba ambil pesan error dari body
+      let errMsg = `Server error: ${res.status} ${res.statusText}`;
+      try {
+        const text = await res.text();
+        if (text) {
+          try {
+            const j = JSON.parse(text);
+            errMsg = j.error || errMsg;
+          } catch {
+            // Body bukan JSON, mungkin HTML error page
+            if (text.includes("timeout") || res.status === 504) {
+              errMsg = t(
+                "Request timed out. Models are slow — try selecting fewer models.",
+                "Permintaan timeout. Model lambat — coba pilih lebih sedikit model."
+              );
+            } else if (res.status === 502 || res.status === 503) {
+              errMsg = t(
+                "Server is busy or restarting. Please try again in a moment.",
+                "Server sibuk atau restart. Coba lagi sebentar."
+              );
+            }
+          }
+        }
+      } catch { /* ignore */ }
+      throw new Error(errMsg);
+    }
+
+    // Cek apakah body kosong
+    const text = await res.text();
+    if (!text || text.trim() === "") {
+      throw new Error(t(
+        "Empty response from server. Likely a timeout — try fewer models.",
+        "Respons kosong dari server. Kemungkinan timeout — coba lebih sedikit model."
+      ));
+    }
+
+    // Parse JSON dengan safety
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (parseErr) {
+      throw new Error(t(
+        "Invalid response from server. Please try again.",
+        "Respons tidak valid dari server. Coba lagi."
+      ));
+    }
+
     if (data.error) throw new Error(data.error);
 
     // Merge hasil baru dengan yang existing
     const mergedResults = { ...existingForSameInput, ...data.results };
 
-    // Simpan ke current results cache
     AppState.currentResults[feature] = {
       input,
       extra,
@@ -664,10 +723,7 @@ async function askMultiModel(feature, input, extra = "", isFollowUp = false) {
       timestamp: new Date().toISOString(),
     };
 
-    // Simpan ke localStorage
     saveHistoryToStorage(feature, input, extra, mergedResults, data.history_id);
-
-    // Background sync ke MongoDB
     syncHistoryToServer(feature, input, extra, mergedResults, data.history_id);
 
     return mergedResults;
@@ -1917,7 +1973,44 @@ function clearView(feature) {
     sessionStorage.setItem(HISTORY_KEY, JSON.stringify(filtered));
   } catch (e) { /* ignore */ }
 }
+/**
+ * Safe fetch JSON wrapper
+ * Handles empty responses, non-JSON responses, dan timeout dengan baik
+ */
+async function safeFetchJSON(url, options = {}) {
+  const res = await fetch(url, options);
 
+  if (!res.ok) {
+    let errMsg = `Server error: ${res.status} ${res.statusText}`;
+    try {
+      const text = await res.text();
+      if (text) {
+        try {
+          const j = JSON.parse(text);
+          errMsg = j.error || errMsg;
+        } catch {
+          if (res.status === 504) {
+            errMsg = t("Request timed out.", "Permintaan timeout.");
+          } else if (res.status === 502 || res.status === 503) {
+            errMsg = t("Server is busy. Try again.", "Server sibuk. Coba lagi.");
+          }
+        }
+      }
+    } catch { /* ignore */ }
+    throw new Error(errMsg);
+  }
+
+  const text = await res.text();
+  if (!text || text.trim() === "") {
+    throw new Error(t("Empty server response.", "Respons server kosong."));
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(t("Invalid server response.", "Respons server tidak valid."));
+  }
+}
 // ==========================================================================
 // PARSING & TEXT FORMATTING UTILITIES
 // ==========================================================================

@@ -761,8 +761,9 @@ class StructCodeAgent:
 
         results = {}
 
-        # Jalankan parallel menggunakan ThreadPoolExecutor
-        # max_workers=3 karena max model yang dipilih adalah 3
+        # Per-model timeout (detik). Disesuaikan agar total tetap di bawah Gunicorn timeout
+        PER_MODEL_TIMEOUT = 90
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             future_to_model = {
                 executor.submit(
@@ -774,29 +775,40 @@ class StructCodeAgent:
                 for model_id in models_to_run
             }
 
-            for future in concurrent.futures.as_completed(future_to_model):
+            # Iterate dengan timeout per future
+            for future in concurrent.futures.as_completed(future_to_model, timeout=PER_MODEL_TIMEOUT + 10):
                 model_id = future_to_model[future]
                 try:
-                    result = future.result()
+                    result = future.result(timeout=PER_MODEL_TIMEOUT)
                     results[model_id] = result.to_dict()
+                except concurrent.futures.TimeoutError:
+                    logger.warning(
+                        "Model timed out | model=%s | timeout=%ds",
+                        model_id, PER_MODEL_TIMEOUT
+                    )
+                    results[model_id] = ModelResult(
+                        model_id=model_id,
+                        exec_time=PER_MODEL_TIMEOUT,
+                        error=f"Model timed out after {PER_MODEL_TIMEOUT}s. Try a faster/smaller model.",
+                    ).to_dict()
                 except Exception as exc:
                     logger.error(
                         "Unexpected error in ask_multi | model=%s | error=%s",
-                        model_id,
-                        str(exc)[:200],
+                        model_id, str(exc)[:200],
                     )
                     results[model_id] = ModelResult(
                         model_id=model_id,
                         error=str(exc)[:200],
                     ).to_dict()
 
-        logger.info(
-            "ask_multi() completed | feature=%s | models_run=%s | lang=%s",
-            feature,
-            models_to_run,
-            language,
-        )
-        return results
+        # Catat model yang tidak sempat di-process
+        processed_models = set(results.keys())
+        for model_id in models_to_run:
+            if model_id not in processed_models:
+                results[model_id] = ModelResult(
+                    model_id=model_id,
+                    error="Model did not respond in time.",
+                ).to_dict()
 
     def explore(self, keyword: str, language: str = "en") -> str:
         """Inline keyword exploration (single model, default Gemini)."""
