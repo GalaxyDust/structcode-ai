@@ -35,17 +35,20 @@ logger = logging.getLogger("agentV1")
 # ---------------------------------------------------------------------------
 # Model Registry (6 Free Models Relevan untuk Tutor Algoritma)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Model Registry (6 Free Models Relevan untuk Tutor Algoritma)
+# ---------------------------------------------------------------------------
 MODEL_REGISTRY = {
-    "google/gemini-2.0-flash-exp:free": {
-        "label": "Gemini 2.0 Flash",
-        "provider_type": "openrouter",
-        "api_model_name": "google/gemini-2.0-flash-exp:free",
+    "google/gemini-2.5-flash": {
+        "label": "Gemini 2.5 Flash",
+        "provider_type": "gemini",
+        "api_model_name": "google/gemini-2.5-flash",
         "persona": "Tutor Algoritma Umum",
         "expertise_tags": ["Algoritma Umum", "Pseudocode", "Penjelasan Konsep"],
         "icon": "⚡",
         "context_length": "1M",
         "is_free": True,
-        "description": "Model default StructCode via OpenRouter. Cepat dan akurat.",
+        "description": "Model default StructCode via gemini. Cepat dan akurat.",
     },
     "meta-llama/llama-3.3-70b-instruct:free": {
         "label": "Llama 3.3 70B",
@@ -91,10 +94,10 @@ MODEL_REGISTRY = {
         "is_free": True,
         "description": "Model open-weight 120B dari OpenAI. Reasoning mendalam.",
     },
-    "nvidia/nemotron-3-super:free": {
+    "nvidia/nemotron-3-super-120b-a12b:free": {  # <--- ID SUDAH DIPERBAIKI SESUAI SCREENSHOT
         "label": "Nemotron 3 Super",
         "provider_type": "openrouter",
-        "api_model_name": "nvidia/nemotron-3-super:free",
+        "api_model_name": "nvidia/nemotron-3-super-120b-a12b:free", # <--- ID SUDAH DIPERBAIKI
         "persona": "Ahli Penalaran Algoritmik Lanjutan",
         "expertise_tags": ["Penalaran Multi-step", "Hybrid MoE", "Long Context"],
         "icon": "🚀",
@@ -125,7 +128,6 @@ MODEL_REGISTRY = {
         "description": "Model NVIDIA 9B yang sangat efisien dan responsif.",
     },
 }
-
 DEFAULT_MODEL_ID = "google/gemini-2.0-flash-exp:free"
 
 # Default model saat pertama load
@@ -775,7 +777,7 @@ class StructCodeAgent:
         extra_context: str = "",
         language: str = "en",
         existing_model_ids: Optional[list[str]] = None,
-        sequential: bool = False,   # ← TAMBAHKAN INI
+        sequential: bool = False,
     ) -> dict[str, dict]:
         """
         Multi-model parallel ask.
@@ -788,6 +790,7 @@ class StructCodeAgent:
             language: 'en' atau 'id'
             existing_model_ids: Model yang sudah punya response
                                  (tidak akan di-generate ulang)
+            sequential: Jalankan model satu per satu atau paralel
 
         Returns:
             Dict { model_id: ModelResult.to_dict() }
@@ -880,6 +883,9 @@ class StructCodeAgent:
                             exec_time=PER_MODEL_TIMEOUT,
                             error="⏱️ Model timed out.",
                         ).to_dict()
+
+        # BARIS INI YANG SEBELUMNYA HILANG DAN BIKIN APLIKASI ANDA ERROR
+        return results
 
     def explore(self, keyword: str, language: str = "en") -> str:
         """Inline keyword exploration (single model, default Gemini)."""
