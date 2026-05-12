@@ -54,6 +54,8 @@ const FEEDBACK_KEY = "sc_feedback_v1";
 const AppState = {
   currentFeature: FEATURES.GENERAL,
   isLoading: false,
+  cooldownActive: false,         // ← TAMBAHKAN
+  cooldownEndTime: 0,            // ← TAMBAHKAN
   followUpIndex: 0,
   totalQueriesSession: 0,
   sessionStartTime: Date.now(),
@@ -616,7 +618,81 @@ function showToast(message, type = "info", duration = 3000) {
     setTimeout(() => toast.remove(), 300);
   }, duration);
 }
+// ==========================================================================
+// COOLDOWN MANAGER (Anti Rate-Limit)
+// ==========================================================================
 
+const COOLDOWN_DURATION = 8000;  // 8 detik
+
+function startCooldown(buttonSelectors = []) {
+  AppState.cooldownActive = true;
+  AppState.cooldownEndTime = Date.now() + COOLDOWN_DURATION;
+
+  // Default: target SEMUA tombol primary submit di seluruh app
+  const selectors = buttonSelectors.length > 0 ? buttonSelectors : [
+    "#btn-ask-general",                      // General view
+    "#view-from_code .btn-primary",          // From Code view
+    "#view-explain .btn-primary",            // Explain view
+    "#view-help_fix .btn-primary",           // Help Fix view
+    "#view-help_write .btn-primary",         // Help Write view
+    ".followup-chip",                        // Follow-up chips
+  ];
+
+  // Kumpulkan semua tombol target
+  const buttons = [];
+  selectors.forEach((sel) => {
+    document.querySelectorAll(sel).forEach((btn) => {
+      // Skip kalau sudah disabled / bukan tombol Ask
+      if (btn.classList.contains("btn-ghost")) return;  // Skip Clear button
+      buttons.push(btn);
+    });
+  });
+
+  // Simpan original text & disable
+  buttons.forEach((btn) => {
+    if (!btn.dataset.originalText) {
+      btn.dataset.originalText = btn.innerHTML;
+    }
+    btn.disabled = true;
+    btn.classList.add("btn-cooldown");
+  });
+
+  // Update countdown setiap detik
+  let secondsLeft = Math.ceil(COOLDOWN_DURATION / 1000);
+
+  const updateButtons = (sec) => {
+    buttons.forEach((btn) => {
+      // Untuk follow-up chip, jangan ubah text
+      if (btn.classList.contains("followup-chip")) return;
+      btn.innerHTML = `⏳ ${sec}s`;
+    });
+  };
+
+  updateButtons(secondsLeft);
+
+  const interval = setInterval(() => {
+    secondsLeft--;
+    if (secondsLeft <= 0) {
+      clearInterval(interval);
+      AppState.cooldownActive = false;
+      // Restore tombol
+      buttons.forEach((btn) => {
+        btn.disabled = false;
+        btn.classList.remove("btn-cooldown");
+        if (btn.dataset.originalText) {
+          btn.innerHTML = btn.dataset.originalText;
+          delete btn.dataset.originalText;
+        }
+      });
+    } else {
+      updateButtons(secondsLeft);
+    }
+  }, 1000);
+}
+
+function isInCooldown() {
+  return AppState.cooldownActive && Date.now() < AppState.cooldownEndTime;
+}
 function shakeElement(el) {
   if (!el) return;
   el.classList.remove("shake");
@@ -657,6 +733,8 @@ async function askMultiModel(feature, input, extra = "", isFollowUp = false) {
         existing_model_ids: existingModelIds,
         is_follow_up: isFollowUp,
         follow_up_index: AppState.followUpIndex,
+        // Auto sequential kalau >2 model baru
+        sequential: newModels.length > 2,
       }),
     });
 
@@ -765,12 +843,26 @@ async function askMultiModel(feature, input, extra = "", isFollowUp = false) {
 
 async function submitGeneral() {
   if (AppState.isLoading || !DOM.inputGeneral) return;
+
+  // Cooldown check
+  if (isInCooldown()) {
+    showToast(
+      t("Please wait a moment before asking again.", "Tunggu sebentar sebelum bertanya lagi."),
+      "warning"
+    );
+    return;
+  }
+
   const input = DOM.inputGeneral.value.trim();
-  if (!input) { shakeElement(DOM.inputGeneral); return; }
+  if (!input) {
+    shakeElement(DOM.inputGeneral);
+    return;
+  }
 
   addChatMessage(FEATURES.GENERAL, "user", escapeHtml(input));
   DOM.inputGeneral.value = "";
 
+  startCooldown();   // ← Mulai cooldown setelah validasi sukses
   AppState.isLoading = true;
   AppState.totalQueriesSession++;
   const typingEl = showTypingIndicator(DOM.chatGeneral);
@@ -790,10 +882,21 @@ async function submitGeneral() {
 async function submitFollowUp(text) {
   if (AppState.isLoading || !DOM.inputGeneral) return;
 
+  // Cooldown check
+  if (isInCooldown()) {
+    showToast(
+      t("Please wait a moment before asking again.", "Tunggu sebentar sebelum bertanya lagi."),
+      "warning"
+    );
+    return;
+  }
+
   const cleanText = text.replace(/<[^>]+>/g, "");
   AppState.followUpIndex++;
 
   addChatMessage(FEATURES.GENERAL, "user", escapeHtml(cleanText));
+
+  startCooldown();   // ← Mulai cooldown
   AppState.isLoading = true;
   AppState.totalQueriesSession++;
 
@@ -813,7 +916,6 @@ async function submitFollowUp(text) {
     AppState.isLoading = false;
   }
 }
-
 function renderGeneralMultiResponse(results, queryText) {
   const modelIds = Object.keys(results);
   const isSingle = modelIds.length === 1;
@@ -1143,11 +1245,37 @@ function renderHelpWriteContent(text, input) {
 
 async function submitFromCode() {
   if (AppState.isLoading) return;
+
+  // Cooldown check
+  if (isInCooldown()) {
+    showToast(
+      t("Please wait a moment before asking again.", "Tunggu sebentar sebelum bertanya lagi."),
+      "warning"
+    );
+    return;
+  }
+
   const code = DOM.codeFromCode?.value?.trim() || "";
   const question = DOM.qFromCode?.value?.trim() || "";
-  if (!code) { shakeElement(DOM.codeFromCode); showToast(t("Paste pseudocode first.", "Tempel pseudocode dahulu."), "warning"); return; }
-  if (!question) { shakeElement(DOM.qFromCode); showToast(t("Enter your question.", "Masukkan pertanyaan Anda."), "warning"); return; }
 
+  if (!code) {
+    shakeElement(DOM.codeFromCode);
+    showToast(
+      t("Paste pseudocode first.", "Tempel pseudocode dahulu."),
+      "warning"
+    );
+    return;
+  }
+  if (!question) {
+    shakeElement(DOM.qFromCode);
+    showToast(
+      t("Enter your question.", "Masukkan pertanyaan Anda."),
+      "warning"
+    );
+    return;
+  }
+
+  startCooldown();   // ← Mulai cooldown setelah validasi sukses
   AppState.isLoading = true;
   AppState.totalQueriesSession++;
   renderMultiModelOutput("output-from_code", FEATURES.FROM_CODE, question, code);
@@ -1159,9 +1287,28 @@ async function submitFromCode() {
 
 async function submitExplain() {
   if (AppState.isLoading) return;
-  const code = DOM.codeExplain?.value?.trim() || "";
-  if (!code) { shakeElement(DOM.codeExplain); showToast(t("Paste pseudocode to explain.", "Tempel pseudocode."), "warning"); return; }
 
+  // Cooldown check
+  if (isInCooldown()) {
+    showToast(
+      t("Please wait a moment before asking again.", "Tunggu sebentar sebelum bertanya lagi."),
+      "warning"
+    );
+    return;
+  }
+
+  const code = DOM.codeExplain?.value?.trim() || "";
+
+  if (!code) {
+    shakeElement(DOM.codeExplain);
+    showToast(
+      t("Paste pseudocode to explain.", "Tempel pseudocode."),
+      "warning"
+    );
+    return;
+  }
+
+  startCooldown();   // ← Mulai cooldown setelah validasi sukses
   AppState.isLoading = true;
   AppState.totalQueriesSession++;
   renderMultiModelOutput("output-explain", FEATURES.EXPLAIN, code, code);
@@ -1173,11 +1320,34 @@ async function submitExplain() {
 
 async function submitHelpFix() {
   if (AppState.isLoading) return;
+
+  // Cooldown check
+  if (isInCooldown()) {
+    showToast(
+      t("Please wait a moment before asking again.", "Tunggu sebentar sebelum bertanya lagi."),
+      "warning"
+    );
+    return;
+  }
+
   const code = DOM.codeHelpFix?.value?.trim() || "";
   const intent = DOM.intentHelpFix?.value?.trim() || "";
-  if (!code) { shakeElement(DOM.codeHelpFix); showToast(t("Paste pseudocode first.", "Tempel pseudocode dahulu."), "warning"); return; }
 
-  const input = intent || t("Please identify and suggest fixes.", "Tolong identifikasi dan sarankan perbaikan.");
+  if (!code) {
+    shakeElement(DOM.codeHelpFix);
+    showToast(
+      t("Paste pseudocode first.", "Tempel pseudocode dahulu."),
+      "warning"
+    );
+    return;
+  }
+
+  const input = intent || t(
+    "Please identify and suggest fixes.",
+    "Tolong identifikasi dan sarankan perbaikan."
+  );
+
+  startCooldown();   // ← Mulai cooldown setelah validasi sukses
   AppState.isLoading = true;
   AppState.totalQueriesSession++;
   renderMultiModelOutput("output-help_fix", FEATURES.HELP_FIX, input, code);
@@ -1189,9 +1359,28 @@ async function submitHelpFix() {
 
 async function submitHelpWrite() {
   if (AppState.isLoading) return;
-  const input = DOM.inputHelpWrite?.value?.trim() || "";
-  if (!input) { shakeElement(DOM.inputHelpWrite); showToast(t("Describe the algorithm.", "Deskripsikan algoritma."), "warning"); return; }
 
+  // Cooldown check
+  if (isInCooldown()) {
+    showToast(
+      t("Please wait a moment before asking again.", "Tunggu sebentar sebelum bertanya lagi."),
+      "warning"
+    );
+    return;
+  }
+
+  const input = DOM.inputHelpWrite?.value?.trim() || "";
+
+  if (!input) {
+    shakeElement(DOM.inputHelpWrite);
+    showToast(
+      t("Describe the algorithm.", "Deskripsikan algoritma."),
+      "warning"
+    );
+    return;
+  }
+
+  startCooldown();   // ← Mulai cooldown setelah validasi sukses
   AppState.isLoading = true;
   AppState.totalQueriesSession++;
   renderMultiModelOutput("output-help_write", FEATURES.HELP_WRITE, input, "");

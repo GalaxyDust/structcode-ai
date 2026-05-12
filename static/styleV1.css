@@ -1426,7 +1426,45 @@ textarea:focus { border-color: var(--accent); }
   .locked-rating-text { font-size: var(--font-size-xs); }
   .rating-edit-btn { padding: 3px 8px; font-size: 0.75rem; }
 }
+/* ======================================================================
+   COOLDOWN STATE (Anti spam click)
+   ====================================================================== */
+.btn.btn-cooldown {
+  opacity: 0.6 !important;
+  cursor: not-allowed !important;
+  background: var(--bg-elevated) !important;
+  color: var(--text-dim) !important;
+  pointer-events: none;
+  transition: all 0.3s ease;
+  position: relative;
+}
 
+.btn.btn-cooldown::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.05) 50%,
+    transparent 100%
+  );
+  animation: cooldownShimmer 2s infinite;
+  border-radius: inherit;
+}
+
+@keyframes cooldownShimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* Follow-up chip cooldown style (lebih subtle) */
+.followup-chip.btn-cooldown {
+  opacity: 0.5 !important;
+  background: var(--bg-elevated) !important;
+  color: var(--text-muted) !important;
+  border-color: var(--border) !important;
+}
 /* ======================================================================
    REDUCED MOTION PREFERENCE
    ====================================================================== */

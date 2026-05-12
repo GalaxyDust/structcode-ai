@@ -384,7 +384,15 @@ def ask_multi():
     if not model_ids:
         model_ids = [DEFAULT_MODEL_ID]
 
-    # Jalankan multi-model parallel
+    # Auto-detect sequential mode:
+    # - Kalau >2 model dipilih, pakai sequential untuk hindari rate limit
+    # - Atau bisa di-force dari frontend via 'sequential' flag
+    use_sequential = bool(payload.get("sequential", False))
+    new_models_count = len([m for m in model_ids if m not in existing_model_ids])
+    if new_models_count > 2:
+        use_sequential = True
+        logger.info("Auto-enabling sequential mode for %d new models", new_models_count)
+
     try:
         results = agent.ask_multi(
             feature=feature,
@@ -393,8 +401,8 @@ def ask_multi():
             extra_context=extra_context,
             language=language,
             existing_model_ids=existing_model_ids,
+            sequential=use_sequential,
         )
-        # Pastikan results adalah dict (bukan None)
         if results is None:
             results = {}
     except Exception as exc:

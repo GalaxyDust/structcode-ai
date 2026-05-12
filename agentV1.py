@@ -36,16 +36,16 @@ logger = logging.getLogger("agentV1")
 # Model Registry (6 Free Models Relevan untuk Tutor Algoritma)
 # ---------------------------------------------------------------------------
 MODEL_REGISTRY = {
-    "google/gemini-2.5-flash": {
-        "label": "Gemini Flash",
-        "provider_type": "gemini",
-        "api_model_name": "gemini-2.5-flash",   # ← NEW: nama untuk SDK
+    "google/gemini-2.0-flash-exp:free": {
+        "label": "Gemini 2.0 Flash",
+        "provider_type": "openrouter",
+        "api_model_name": "google/gemini-2.0-flash-exp:free",
         "persona": "Tutor Algoritma Umum",
         "expertise_tags": ["Algoritma Umum", "Pseudocode", "Penjelasan Konsep"],
         "icon": "⚡",
         "context_length": "1M",
         "is_free": True,
-        "description": "Model default StructCode. Cepat, akurat, dan konsisten dalam format pedagogis.",
+        "description": "Model default StructCode via OpenRouter. Cepat dan akurat.",
     },
     "meta-llama/llama-3.3-70b-instruct:free": {
         "label": "Llama 3.3 70B",
@@ -56,29 +56,29 @@ MODEL_REGISTRY = {
         "icon": "🦙",
         "context_length": "66K",
         "is_free": True,
-        "description": "Model 70B dari Meta. Sangat kuat dalam penalaran logika dan analisis struktur data.",
+        "description": "Model 70B dari Meta. Sangat kuat dalam penalaran logika.",
     },
     "qwen/qwen3-coder:free": {
         "label": "Qwen3 Coder",
         "provider_type": "openrouter",
-        "api_model_name": "qwen/qwen3-coder:free",   # ← FIXED
+        "api_model_name": "qwen/qwen3-coder:free",
         "persona": "Ahli Pseudocode & Implementasi",
         "expertise_tags": ["Pseudocode", "Implementasi Kode", "Optimasi Algoritma"],
         "icon": "🐉",
         "context_length": "262K",
         "is_free": True,
-        "description": "Model spesialis kode dari Qwen. Unggul dalam pseudocode dan analisis implementasi.",
+        "description": "Model spesialis kode dari Qwen. Unggul dalam pseudocode.",
     },
     "google/gemma-4-31b-it:free": {
         "label": "Gemma 4 31B",
         "provider_type": "openrouter",
-        "api_model_name": "google/gemma-4-31b-it:free",   # ← FIXED (was gemma-3-27b)
+        "api_model_name": "google/gemma-4-31b-it:free",
         "persona": "Ahli Matematika Diskrit & Kompleksitas",
-        "expertise_tags": ["Kompleksitas Algoritma", "Matematika Diskrit", "Big-O Analysis"],
+        "expertise_tags": ["Kompleksitas Algoritma", "Matematika Diskrit", "Big-O"],
         "icon": "💎",
         "context_length": "256K",
         "is_free": True,
-        "description": "Model terbaru Google open-source. Ahli dalam analisis kompleksitas dan matematika diskrit.",
+        "description": "Model multimodal Google 30.7B dense. Ahli analisis kompleksitas.",
     },
     "openai/gpt-oss-120b:free": {
         "label": "GPT-OSS 120B",
@@ -89,20 +89,44 @@ MODEL_REGISTRY = {
         "icon": "🧠",
         "context_length": "131K",
         "is_free": True,
-        "description": "Model open-weight 120B dari OpenAI. Unggul dalam problem solving dan reasoning mendalam.",
+        "description": "Model open-weight 120B dari OpenAI. Reasoning mendalam.",
     },
-    "nousresearch/hermes-3-llama-3.1-405b:free": {
-        "label": "Hermes 3 405B",
+    "nvidia/nemotron-3-super:free": {
+        "label": "Nemotron 3 Super",
         "provider_type": "openrouter",
-        "api_model_name": "nousresearch/hermes-3-llama-3.1-405b:free",   # ← FIXED
-        "persona": "Ahli Penalaran Algoritmik",
-        "expertise_tags": ["Penalaran Multi-step", "Algoritma Rekursif", "Dynamic Programming"],
-        "icon": "🏛️",
+        "api_model_name": "nvidia/nemotron-3-super:free",
+        "persona": "Ahli Penalaran Algoritmik Lanjutan",
+        "expertise_tags": ["Penalaran Multi-step", "Hybrid MoE", "Long Context"],
+        "icon": "🚀",
+        "context_length": "262K",
+        "is_free": True,
+        "description": "Model 120B MoE NVIDIA. Hybrid Mamba-Transformer untuk reasoning kompleks.",
+    },
+    "openai/gpt-oss-20b:free": {
+        "label": "GPT-OSS 20B",
+        "provider_type": "openrouter",
+        "api_model_name": "openai/gpt-oss-20b:free",
+        "persona": "Asisten Algoritma Cepat",
+        "expertise_tags": ["Quick Response", "Pemrograman", "Algoritma Dasar"],
+        "icon": "💨",
         "context_length": "131K",
         "is_free": True,
-        "description": "Model 405B fine-tuned untuk instruksi. Sangat patuh format dan ahli dalam penalaran multi-step.",
+        "description": "Versi ringan GPT-OSS. Sangat cepat untuk query sederhana.",
+    },
+    "nvidia/nemotron-nano-9b-v2:free": {
+        "label": "Nemotron Nano 9B",
+        "provider_type": "openrouter",
+        "api_model_name": "nvidia/nemotron-nano-9b-v2:free",
+        "persona": "Asisten Reasoning Ringan",
+        "expertise_tags": ["Quick Reasoning", "Efisien", "Dasar"],
+        "icon": "🔬",
+        "context_length": "128K",
+        "is_free": True,
+        "description": "Model NVIDIA 9B yang sangat efisien dan responsif.",
     },
 }
+
+DEFAULT_MODEL_ID = "google/gemini-2.0-flash-exp:free"
 
 # Default model saat pertama load
 DEFAULT_MODEL_ID = "meta-llama/llama-3.3-70b-instruct:free"
@@ -594,8 +618,10 @@ class StructCodeAgent:
         user_prompt: str,
     ) -> str:
         """
-        Generate dengan retry custom (tanpa tenacity untuk error tertentu).
-        Rate limit & region block langsung fail tanpa retry.
+        Generate dengan smart retry strategy.
+        - Untuk rate limit: retry 1x setelah 5 detik (kasih chance refill)
+        - Untuk error transient: retry 1x dengan wait 2 detik
+        - Untuk region/quota: langsung fail
         """
         max_attempts = 2
         last_exception = None
@@ -612,23 +638,38 @@ class StructCodeAgent:
                 err_str = str(exc).lower()
                 last_exception = exc
 
-                # Rate limit — JANGAN retry, langsung fail
-                if any(t in err_str for t in ["429", "rate limit", "rate_limit", "too many requests"]):
-                    logger.warning(
-                        "Rate limit hit | model=%s | attempt=%d | NO RETRY",
-                        provider.model_name, attempt + 1,
-                    )
-                    raise Exception("RATE_LIMIT: Daily/minute quota exceeded for this model. Try other models or wait.")
+                # Rate limit — retry SEKALI dengan delay 5 detik (refill window)
+                is_rate_limit = any(t in err_str for t in [
+                    "429", "rate limit", "rate_limit", "too many requests"
+                ])
+                if is_rate_limit:
+                    if attempt < max_attempts - 1:
+                        logger.info(
+                            "Rate limit hit, waiting 5s before retry | model=%s | attempt=%d",
+                            provider.model_name, attempt + 1,
+                        )
+                        time.sleep(5)
+                        continue
+                    else:
+                        logger.warning(
+                            "Rate limit persisted | model=%s | giving up",
+                            provider.model_name,
+                        )
+                        raise Exception("RATE_LIMIT: Too many requests. Try again in 1 minute or pick another model.")
 
                 # Region block — JANGAN retry
-                if "location is not supported" in err_str or "region" in err_str:
+                if "location is not supported" in err_str or "user location" in err_str:
                     raise Exception("REGION_BLOCK: Model unavailable in server region.")
 
-                # Quota habis (OpenRouter daily limit)
-                if "insufficient" in err_str or "quota" in err_str or "credits" in err_str:
-                    raise Exception("QUOTA_EXCEEDED: Free quota for this model is exhausted.")
+                # Quota habis
+                if "insufficient" in err_str or ("quota" in err_str and "exceeded" in err_str):
+                    raise Exception("QUOTA_EXCEEDED: Free quota exhausted for this model.")
 
-                # Error lain — retry sekali saja dengan wait pendek
+                # No endpoints / model not available
+                if "no endpoints" in err_str or "not a valid model" in err_str:
+                    raise Exception("MODEL_UNAVAILABLE: This model is currently unavailable.")
+
+                # Error transient lain — retry 1x
                 if attempt < max_attempts - 1:
                     logger.info(
                         "Transient error, retrying | model=%s | attempt=%d | error=%s",
@@ -636,11 +677,8 @@ class StructCodeAgent:
                     )
                     time.sleep(2)
                     continue
-
-                # Sudah max attempts
                 raise
 
-        # Tidak akan sampai sini, tapi jaga-jaga
         if last_exception:
             raise last_exception
         raise Exception("Unknown error")
@@ -737,6 +775,7 @@ class StructCodeAgent:
         extra_context: str = "",
         language: str = "en",
         existing_model_ids: Optional[list[str]] = None,
+        sequential: bool = False,   # ← TAMBAHKAN INI
     ) -> dict[str, dict]:
         """
         Multi-model parallel ask.
@@ -778,55 +817,69 @@ class StructCodeAgent:
         user_prompt = self._build_user_prompt(user_input, extra_context)
 
         results = {}
-        PER_MODEL_TIMEOUT = 50  # seconds
+        PER_MODEL_TIMEOUT = 50
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            future_to_model = {
-                executor.submit(
-                    self._run_single_model,
-                    model_id,
-                    system_prompt,
-                    user_prompt,
-                ): model_id
-                for model_id in models_to_run
-            }
-
-            # Iterate dengan timeout total — wrap dalam try-catch agar tidak crash
-            try:
-                for future in concurrent.futures.as_completed(
-                    future_to_model,
-                    timeout=PER_MODEL_TIMEOUT + 15,
-                ):
-                    model_id = future_to_model[future]
-                    try:
-                        result = future.result(timeout=1)  # sudah selesai, ambil cepat
-                        results[model_id] = result.to_dict()
-                    except Exception as exc:
-                        logger.error(
-                            "Future error | model=%s | error=%s",
-                            model_id, str(exc)[:200],
-                        )
-                        results[model_id] = ModelResult(
-                            model_id=model_id,
-                            error=str(exc)[:200],
-                        ).to_dict()
-            except concurrent.futures.TimeoutError:
-                # Timeout global - sebagian model belum selesai
-                logger.warning(
-                    "Global timeout reached | completed=%d/%d",
-                    len(results), len(future_to_model),
-                )
-
-            # Catat model yang belum selesai sebagai timeout
-            for future, model_id in future_to_model.items():
-                if model_id not in results:
-                    if not future.done():
-                        future.cancel()
+        if sequential:
+            # ===== SEQUENTIAL MODE — Run satu per satu =====
+            # Lebih lambat tapi anti rate-limit
+            logger.info("Running %d models in SEQUENTIAL mode", len(models_to_run))
+            for idx, model_id in enumerate(models_to_run):
+                try:
+                    result = self._run_single_model(model_id, system_prompt, user_prompt)
+                    results[model_id] = result.to_dict()
+                except Exception as exc:
+                    logger.error("Sequential model error | model=%s | error=%s",
+                                model_id, str(exc)[:200])
                     results[model_id] = ModelResult(
                         model_id=model_id,
-                        exec_time=PER_MODEL_TIMEOUT,
-                        error="⏱️ Model timed out. Try a faster model or fewer models.",
+                        error=str(exc)[:200],
                     ).to_dict()
+                # Delay antar model (kecuali yang terakhir)
+                if idx < len(models_to_run) - 1:
+                    time.sleep(2)  # 2 detik delay antar model
+
+        else:
+            # ===== PARALLEL MODE =====
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                future_to_model = {
+                    executor.submit(
+                        self._run_single_model,
+                        model_id,
+                        system_prompt,
+                        user_prompt,
+                    ): model_id
+                    for model_id in models_to_run
+                }
+
+                try:
+                    for future in concurrent.futures.as_completed(
+                        future_to_model,
+                        timeout=PER_MODEL_TIMEOUT + 15,
+                    ):
+                        model_id = future_to_model[future]
+                        try:
+                            result = future.result(timeout=1)
+                            results[model_id] = result.to_dict()
+                        except Exception as exc:
+                            logger.error("Future error | model=%s | error=%s",
+                                        model_id, str(exc)[:200])
+                            results[model_id] = ModelResult(
+                                model_id=model_id,
+                                error=str(exc)[:200],
+                            ).to_dict()
+                except concurrent.futures.TimeoutError:
+                    logger.warning("Global timeout reached | completed=%d/%d",
+                                len(results), len(future_to_model))
+
+                for future, model_id in future_to_model.items():
+                    if model_id not in results:
+                        if not future.done():
+                            future.cancel()
+                        results[model_id] = ModelResult(
+                            model_id=model_id,
+                            exec_time=PER_MODEL_TIMEOUT,
+                            error="⏱️ Model timed out.",
+                        ).to_dict()
 
     def explore(self, keyword: str, language: str = "en") -> str:
         """Inline keyword exploration (single model, default Gemini)."""
